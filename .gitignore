@@ -1,0 +1,32 @@
+# Build outputs
+target/
+
+# Local editor and operating-system files
+.DS_Store
+.idea/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+
+# Logs
+*.log
+
+# Local SQLite databases and write-ahead log sidecars
+*.sqlite
+*.sqlite3
+*.db
+*.sqlite-wal
+*.sqlite-shm
+*.db-wal
+*.db-shm
+
+# Local database backups
+*.sqlite.backup-*
+*.db.backup-*
