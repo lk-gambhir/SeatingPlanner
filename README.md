@@ -25,12 +25,6 @@ Install JDK 25 or later. From the project directory:
 ./mvnw clean javafx:run
 ```
 
-To run the automated end-to-end verification test suite from scratch:
-
-```sh
-java -cp target/classes:$(./mvnw dependency:build-classpath -Dmdep.outputFile=/dev/stdout -q) app.SystemVerification
-```
-
 For the complete step-by-step administrator user guide, see [docs/WORKFLOW.md](docs/WORKFLOW.md).
 
 ## Current status
