@@ -108,7 +108,7 @@ public final class StudentRepository {
              var rows = statement.executeQuery()) {
             List<String> eventCodes = new ArrayList<>();
             while (rows.next()) eventCodes.add(rows.getString(1));
-            return List.copyOf(eventCodes);
+            return java.util.Collections.unmodifiableList(eventCodes);
         }
     }
 

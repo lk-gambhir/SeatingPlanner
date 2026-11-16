@@ -23,17 +23,24 @@ public final class ExamPlannerApplication extends Application {
         Path databasePath = resolveDatabasePath();
         try {
             DatabaseBootstrap.initialize(databasePath);
-            new MainView().show(stage, databasePath);
         } catch (Exception exception) {
             LOGGER.log(Level.SEVERE, "Could not initialize the application database", exception);
             Alert alert = new Alert(Alert.AlertType.ERROR);
             alert.setTitle("Startup failed");
             alert.setHeaderText("The local database could not be prepared.");
-            String details = exception.getMessage();
+            String details = exception.getMessage() != null ? exception.getMessage() : exception.getClass().getSimpleName();
             alert.setContentText("Database: " + databasePath
                     + "\nCheck that its folder is writable and that the database file is not locked."
-                    + (details == null || details.isBlank() ? "" : "\n\nDetails: " + details));
+                    + "\n\nDetails: " + details);
             alert.showAndWait();
+            stage.close();
+            return;
+        }
+
+        try {
+            new MainView().show(stage, databasePath);
+        } catch (Exception exception) {
+            ui.UiFeedback.error("Could not load application interface", exception);
             stage.close();
             return;
         }

@@ -207,7 +207,7 @@ public final class StudentDashboard extends BorderPane {
         String selectedEvent = enrollmentEvent.getValue();
         List<String> eventCodes = repository.findEventCodes();
         enrollmentEvent.setItems(FXCollections.observableArrayList(eventCodes));
-        enrollmentEvent.setValue(eventCodes.contains(selectedEvent) ? selectedEvent : null);
+        enrollmentEvent.setValue(selectedEvent != null && eventCodes.contains(selectedEvent) ? selectedEvent : null);
         importEnrollments.setDisable(enrollmentEvent.getValue() == null);
         refreshCourseDemand();
         setOptions(program, allStudents.stream().map(Student::program).filter(value -> value != null).distinct().sorted().toList());
