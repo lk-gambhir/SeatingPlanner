@@ -1,0 +1,80 @@
+.root {
+    -fx-font-family: "System";
+    -fx-background-color: #f4f6fa;
+}
+
+.page-header {
+    -fx-padding: 30 32 24 32;
+}
+
+.eyebrow {
+    -fx-text-fill: #53627a;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+}
+
+.page-title {
+    -fx-text-fill: #17243a;
+    -fx-font-size: 26px;
+    -fx-font-weight: bold;
+}
+
+.page-subtitle {
+    -fx-text-fill: #617089;
+    -fx-font-size: 14px;
+}
+
+.workspace-tabs {
+    -fx-background-color: transparent;
+}
+
+.workspace-tabs > .tab-header-area > .tab-header-background {
+    -fx-background-color: transparent;
+}
+
+.workspace-tabs .tab {
+    -fx-background-color: #e9edf4;
+    -fx-padding: 9 15 9 15;
+}
+
+.workspace-tabs .tab:selected {
+    -fx-background-color: white;
+}
+
+.workspace-tabs .tab-label {
+    -fx-text-fill: #26364e;
+    -fx-font-weight: bold;
+}
+
+.workspace-tabs > .tab-content-area {
+    -fx-background-color: white;
+    -fx-background-radius: 0 8 8 8;
+    -fx-border-color: #e1e6ee;
+    -fx-border-radius: 0 8 8 8;
+}
+
+.empty-state {
+    -fx-text-fill: #617089;
+    -fx-font-size: 15px;
+}
+
+.status-bar {
+    -fx-padding: 12 28 16 28;
+    -fx-text-fill: #718096;
+    -fx-font-size: 11px;
+}
+
+.summary-card {
+    -fx-alignment: center-left;
+    -fx-background-color: #f4f6fa;
+    -fx-border-color: #e1e6ee;
+    -fx-border-radius: 6;
+    -fx-background-radius: 6;
+    -fx-padding: 12 14;
+    -fx-text-fill: #26364e;
+    -fx-font-weight: bold;
+}
+
+.summary-card:hover {
+    -fx-background-color: #e9edf4;
+}

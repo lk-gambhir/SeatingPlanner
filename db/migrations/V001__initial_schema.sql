@@ -1,6 +1,3 @@
--- Initial normalized SQLite schema for the exam seating and invigilation planner.
--- Apply through the Java/JDBC migration runner in one transaction.
-
 CREATE TABLE import_batch (
     import_batch_id TEXT PRIMARY KEY,
     batch_label     TEXT NOT NULL,

@@ -8,21 +8,27 @@
     <artifactId>exam-seating-planner</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <name>Automated Exam Seating and Invigilation Planner</name>
-    <description>Local Swing application for exam seating and invigilation planning.</description>
+    <description>Local JavaFX application for exam seating and invigilation planning.</description>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>25</maven.compiler.release>
+        <javafx.version>27.0.1</javafx.version>
+        <commons-csv.version>1.14.1</commons-csv.version>
         <sqlite-jdbc.version>3.53.4.0</sqlite-jdbc.version>
         <pdfbox.version>3.0.8</pdfbox.version>
     </properties>
 
     <dependencies>
         <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <version>5.14.2</version>
-            <scope>test</scope>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-controls</artifactId>
+            <version>${javafx.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-csv</artifactId>
+            <version>${commons-csv.version}</version>
         </dependency>
         <dependency>
             <groupId>org.xerial</groupId>
@@ -59,17 +65,12 @@
                 </configuration>
             </plugin>
             <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>exec-maven-plugin</artifactId>
-                <version>3.5.0</version>
+                <groupId>org.openjfx</groupId>
+                <artifactId>javafx-maven-plugin</artifactId>
+                <version>0.0.8</version>
                 <configuration>
                     <mainClass>app.ExamPlannerApplication</mainClass>
                 </configuration>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.6.0</version>
             </plugin>
         </plugins>
     </build>

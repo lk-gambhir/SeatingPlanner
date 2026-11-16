@@ -1,6 +1,9 @@
 # Build outputs
 target/
 
+# Local-only project notes and demo-data generator
+/tools/
+
 # Local editor and operating-system files
 .DS_Store
 .idea/

@@ -8,7 +8,7 @@ These files are development fixtures, not Thapar's operational student, room, or
 |---|---:|---|
 | `students.csv` | 10,000 | Synthetic student dashboard cohort (`DEMO-STU-*`, `DEMO-ROLL-*`). |
 | `enrollments.csv` | 73,616 | Normalized synthetic registered-course rows, tied to the 2026 assessment period. |
-| `course_student_list.csv` | 73,616 | Flat optional roster import/export format with paper/date/time context. It is a view of `enrollments.csv`; import one roster representation, not both. |
+| `course_student_list.csv` | 73,616 | Retained demo reference view of `enrollments.csv`; there is no separate import path in the current release. |
 | `exam_sessions.csv` | 1 | Synthetic assessment-period record for `MST-2026-ODD`. |
 | `exam_events.csv` | 386 | One row per course paper, with date, start time, source count, source page/row, and shared-slot ID. |
 | `course_demand_source.csv` | 386 | PDF-derived aggregate candidate counts and source references; no identities. |
@@ -36,10 +36,10 @@ These files are development fixtures, not Thapar's operational student, room, or
 
 1. Import `invigilators.csv` into the staff dashboard and preview `invigilator_course_assignments.csv` as a separate teaching/exclusion relationship file.
 2. Import `rooms.csv` into an empty demo inventory or reconcile by stable `room_id`; do not append duplicate room rows on every import.
-3. Import `students.csv` and then either `enrollments.csv` or `course_student_list.csv`, not both as authoritative registrations.
+3. Import `students.csv`, then `enrollments.csv`. Treat `course_student_list.csv` as a reference/export example only.
 4. For schedule workflow, import the date sheet and count sheet as one reviewed event. `exam_events.csv` is the normalized synthetic schedule fixture; `course_demand_source.csv` preserves the source-derived counts. The shared event duration remains an application input, so `end_time` is intentionally blank in the event fixture.
 5. Keep the app's normal preview, row diagnostics, and deliberate commit confirmation enabled for all fixtures.
 
 ## Regeneration
 
-`python3 tools/generate_demo_data.py` regenerates the dependent student, roster, event, and invigilator CSVs from `course_demand_source.csv` using a fixed random seed. The PDF extraction that created `course_demand_source.csv` is intentionally not part of application startup; this keeps runtime independent from local PDF tooling and leaves source extraction reviewable.
+The derived student, roster, event, and invigilator CSVs were generated from `course_demand_source.csv` using a fixed random seed. The generator script is maintained outside the GitHub repository, so the checked-in fixtures can be used as-is but cannot be regenerated from a fresh clone. The PDF extraction that created `course_demand_source.csv` is also not part of application startup; this keeps runtime independent from local PDF tooling and leaves source extraction reviewable.

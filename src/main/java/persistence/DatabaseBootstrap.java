@@ -18,7 +18,10 @@ public final class DatabaseBootstrap {
     private static final Pattern MIGRATION_NAME = Pattern.compile("V(\\d+)__.*\\.sql");
     private static final List<String> MIGRATIONS = List.of(
             "/db/migrations/V001__initial_schema.sql",
-            "/db/migrations/V002__plan_snapshot_metadata.sql");
+            "/db/migrations/V002__plan_snapshot_metadata.sql",
+            "/db/migrations/V003__plan_display_snapshots.sql",
+            "/db/migrations/V004__import_source_headers.sql",
+            "/db/migrations/V005__room_source_note.sql");
 
     private DatabaseBootstrap() {
     }
