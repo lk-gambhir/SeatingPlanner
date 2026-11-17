@@ -423,7 +423,7 @@ public final class PlanRepository {
                     String candidateKey = rows.getString("candidate_label");
                     if (candidateKey == null) candidateKey = "ANON-" + rows.getString("session_course_id") + "-" + anonymous;
                     var candidate = new SeatAssignmentPlanner.Candidate(candidateKey, rows.getString("course_code_snapshot"),
-                            studentId, anonymous, -1, rows.getString("session_course_id"));
+                            studentId, anonymous, rows.getString("session_course_id"));
                     var seat = new SeatAssignmentPlanner.Seat(rows.getInt("seat_id"), rows.getInt("row_number"),
                             rows.getInt("column_number"), rows.getString("seat_status").equals("USABLE"));
                     seatsByAssignment.computeIfAbsent(rows.getString("room_assignment_id"), ignored -> new ArrayList<>())
@@ -492,10 +492,9 @@ public final class PlanRepository {
                 Map<String, List<StudentCandidate>> registrations = loadRegistrations(connection, eventCode);
                 Set<String> rostersProvided = loadCoursesWithRegistrations(connection, eventCode);
                 Map<String, List<SeatAssignmentPlanner.Seat>> seats = loadSeats(connection);
-                Map<String, Integer> previousSeats = loadPreviousSeats(connection);
                 Set<String> clashes = findClashes(feasibility, papers, registrations);
                 List<GeneratedPlan.Session> sessions = makeSessions(feasibility, papers, registrations, rostersProvided,
-                        seats, previousSeats, clashes);
+                        seats, clashes);
                 GeneratedPlan plan = new GeneratedPlan(eventCode, snapshot.sourceRevision(), sessions);
                 plan = addValidationDiagnostics(plan, new PlanValidator().validate(plan, snapshot));
                 connection.commit();
@@ -656,20 +655,6 @@ public final class PlanRepository {
         return courseIds;
     }
 
-    private static Map<String, Integer> loadPreviousSeats(Connection connection) throws SQLException {
-        Map<String, Integer> previous = new HashMap<>();
-        try (var statement = connection.prepareStatement("""
-                SELECT a.student_id, a.seat_id FROM seat_assignment a
-                JOIN plan_session ps ON ps.plan_session_id=a.plan_session_id
-                JOIN plan p ON p.plan_id=ps.plan_id
-                WHERE a.student_id IS NOT NULL AND p.status<>'SUPERSEDED'
-                ORDER BY p.created_at DESC, p.version_number DESC
-                """); var rows = statement.executeQuery()) {
-            while (rows.next()) previous.putIfAbsent(rows.getString("student_id"), rows.getInt("seat_id"));
-        }
-        return previous;
-    }
-
     private static Set<String> findClashes(FeasibilityReport report, Map<String, Map<String, Paper>> papers,
             Map<String, List<StudentCandidate>> registrations) {
         Map<String, List<Registration>> byStudent = new HashMap<>();
@@ -700,8 +685,7 @@ public final class PlanRepository {
     private static List<GeneratedPlan.Session> makeSessions(FeasibilityReport report,
             Map<String, Map<String, Paper>> papers, Map<String, List<StudentCandidate>> registrations,
             Set<String> rostersProvided,
-            Map<String, List<SeatAssignmentPlanner.Seat>> seatsByRoom, Map<String, Integer> previousSeats,
-            Set<String> clashes) {
+            Map<String, List<SeatAssignmentPlanner.Seat>> seatsByRoom, Set<String> clashes) {
         List<GeneratedPlan.Session> generated = new ArrayList<>();
         for (FeasibilityReport.SessionResult session : report.sessions()) {
             List<FeasibilityReport.Diagnostic> diagnostics = new ArrayList<>(session.diagnostics());
@@ -722,7 +706,7 @@ public final class PlanRepository {
                         int first = nextAnonymousNumber.getOrDefault(paper.sessionCourseId(), 1);
                         for (int number = first; number < first + portion.candidates(); number++) {
                             candidates.add(new SeatAssignmentPlanner.Candidate("ANON-" + paper.sessionCourseId() + "-" + number,
-                                    paper.courseCode(), null, number, -1, paper.sessionCourseId()));
+                                    paper.courseCode(), null, number, paper.sessionCourseId()));
                         }
                         nextAnonymousNumber.put(paper.sessionCourseId(), first + portion.candidates());
                     } else {
@@ -732,8 +716,7 @@ public final class PlanRepository {
                             StudentCandidate student = roster.get(index);
                             if (clashes.contains(key(student.studentId(), session.sessionId()))) continue;
                             candidates.add(new SeatAssignmentPlanner.Candidate(student.rollNumber(), paper.courseCode(),
-                                    student.studentId(), null, previousSeats.getOrDefault(student.studentId(), -1),
-                                    paper.sessionCourseId()));
+                                    student.studentId(), null, paper.sessionCourseId()));
                         }
                         candidateOffset.put(paper.sessionCourseId(), end);
                     }
@@ -750,11 +733,6 @@ public final class PlanRepository {
                 }
                 SeatAssignmentPlanner.Result seating = new SeatAssignmentPlanner().assign(candidates, roomSeats);
                 roomDiagnostics.addAll(seating.diagnostics());
-                for (SeatAssignmentPlanner.Assignment assignment : seating.assignments()) {
-                    if (assignment.candidate().studentId() != null) {
-                        previousSeats.put(assignment.candidate().studentId(), assignment.seat().id());
-                    }
-                }
                 int candidateDemand = room.courses().stream().mapToInt(FeasibilityReport.CoursePortion::candidates).sum();
                 rooms.add(new GeneratedPlan.Room(room.roomId(), room.buildingCode(), room.roomCode(),
                         room.capacityStatus(), room.seats(), candidateDemand, room.staffRequired(), room.staffIds(),

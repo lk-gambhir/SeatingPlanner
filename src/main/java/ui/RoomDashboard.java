@@ -1,7 +1,6 @@
 package ui;
 
 import domain.Room;
-import importexport.RoomAvailabilityCsvImporter;
 import importexport.RoomCsvImporter;
 import importexport.RoomCsvPreview;
 import org.apache.commons.csv.CSVFormat;
@@ -40,7 +39,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 
 /** Room inventory list, filters, and CSV controls. */
 public final class RoomDashboard extends BorderPane {
@@ -88,7 +86,6 @@ public final class RoomDashboard extends BorderPane {
         column("Layout", room -> room.usableCapacity() == room.rows() * room.columns()
                 - blockedSeats.getOrDefault(room.roomId(), List.of()).size() ? "Matches" : "Review", 90);
         column("Capacity status", Room::capacityStatus, 150);
-        column("Source / note", room -> text(room.sourceNote()), 140);
         column("Session availability", room -> sessionAvailability.getOrDefault(room.roomId(), true) ? "Available" : "Unavailable", 140);
         column("Status", room -> room.active() ? "Active" : "Inactive", 100);
         table.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
@@ -132,7 +129,6 @@ public final class RoomDashboard extends BorderPane {
             editRoom(table.getSelectionModel().getSelectedItem());
         });
         Button status = new Button("Change status"); status.setOnAction(event -> toggleSelected());
-        Button reconcile = new Button("Reconcile selected"); reconcile.setOnAction(event -> reconcileSelected());
         Button importCsv = new Button("Import CSV"); importCsv.setOnAction(event -> importCsv());
         Button exportCsv = new Button("Export CSV"); exportCsv.setOnAction(event -> exportCsv(exportCsv));
         sessionSelector.setOnAction(event -> refreshSessionAvailability());
@@ -140,12 +136,10 @@ public final class RoomDashboard extends BorderPane {
         Button selectVisible = new Button("Select visible"); selectVisible.setOnAction(event -> table.getSelectionModel().selectAll());
         Button clearSelection = new Button("Clear selection"); clearSelection.setOnAction(event -> table.getSelectionModel().clearSelection());
         Button applyAvailability = new Button("Apply to selected"); applyAvailability.setOnAction(event -> applySessionAvailability());
-        Button importAvailability = new Button("Import session CSV"); importAvailability.setOnAction(event -> importSessionAvailability());
-        Button exportAvailability = new Button("Export session CSV"); exportAvailability.setOnAction(event -> exportSessionAvailability());
         HBox filters = new HBox(10, search, building, floor, capacityStatus, active, sessionAvailabilityFilter, count);
-        HBox actions = new HBox(8, add, edit, status, reconcile, importCsv, exportCsv, selectVisible, clearSelection);
+        HBox actions = new HBox(8, add, edit, status, importCsv, exportCsv, selectVisible, clearSelection);
         HBox sessionControls = new HBox(8, new Label("Exam session"), sessionSelector, availabilityAction,
-                applyAvailability, importAvailability, exportAvailability, sessionStatus);
+                applyAvailability, sessionStatus);
         VBox controls = new VBox(12, summaryCards, filters, actions, sessionControls);
         controls.setPadding(new Insets(20, 24, 8, 24));
         setTop(controls);
@@ -294,85 +288,6 @@ public final class RoomDashboard extends BorderPane {
         info("Room availability updated", message.toString());
     }
 
-    private void importSessionAvailability() {
-        RoomRepository.SessionOption session = sessionSelector.getValue();
-        if (session == null) { info("Choose an exam session", "Import an exam before loading session room availability."); return; }
-        FileChooser chooser = new FileChooser(); chooser.setTitle("Choose room session availability CSV");
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV files", "*.csv"));
-        var file = chooser.showOpenDialog(getScene().getWindow());
-        if (file == null) return;
-        Set<String> roomIds = allRooms.stream().map(Room::roomId).collect(java.util.stream.Collectors.toSet());
-        Task<RoomAvailabilityCsvImporter.Preview> task = new Task<>() {
-            @Override protected RoomAvailabilityCsvImporter.Preview call() throws Exception {
-                return new RoomAvailabilityCsvImporter().preview(file.toPath(), session.sessionId(), roomIds);
-            }
-        };
-        task.setOnSucceeded(event -> showAvailabilityPreview(session, task.getValue()));
-        task.setOnFailed(event -> error("Could not read session availability CSV", task.getException()));
-        Thread worker = new Thread(task, "room-availability-csv-preview"); worker.setDaemon(true); worker.start();
-    }
-
-    private void showAvailabilityPreview(RoomRepository.SessionOption session, RoomAvailabilityCsvImporter.Preview preview) {
-        StringBuilder details = new StringBuilder("File: ").append(preview.fileName()).append("\nRows: ")
-                .append(preview.rows().size()).append("\nErrors: ")
-                .append(preview.rows().stream().filter(row -> !row.error().isEmpty()).count()).append("\n\n");
-        for (var row : preview.rows()) details.append("Row ").append(row.sourceRow()).append(" · ")
-                .append(row.roomId()).append(" · ").append(row.status())
-                .append(row.error().isEmpty() ? "" : " · " + row.error()).append('\n');
-        TextArea text = new TextArea(details.toString()); text.setEditable(false); text.setWrapText(true);
-        text.setPrefColumnCount(65); text.setPrefRowCount(18);
-        Alert dialog = new Alert(preview.hasErrors() ? Alert.AlertType.ERROR : Alert.AlertType.CONFIRMATION);
-        dialog.setTitle("Review session room availability");
-        dialog.setHeaderText(preview.hasErrors() ? "Fix CSV errors before importing." : "Review changes before importing.");
-        dialog.getDialogPane().setContent(text);
-        dialog.getButtonTypes().setAll(preview.hasErrors() ? ButtonType.CLOSE : ButtonType.OK, ButtonType.CANCEL);
-        if (preview.hasErrors() || dialog.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
-        List<RoomRepository.AvailabilityUpdate> updates = preview.validRows().stream()
-                .map(row -> new RoomRepository.AvailabilityUpdate(row.roomId(), row.available())).toList();
-        List<String> unavailable = updates.stream().filter(update -> Boolean.FALSE.equals(update.available()))
-                .map(RoomRepository.AvailabilityUpdate::roomId).toList();
-        Task<List<RoomRepository.AssignedPlanView>> task = new Task<>() {
-            @Override protected List<RoomRepository.AssignedPlanView> call() throws Exception {
-                repository.updateSessionAvailability(session.sessionId(), updates);
-                return repository.findPlansUsingRooms(session.sessionId(), unavailable);
-            }
-        };
-        task.setOnSucceeded(event -> {
-            refreshSessionAvailability();
-            if (unavailable.isEmpty()) info("Import complete", updates.size() + " room availability rows applied for " + session + ".");
-            else showAffectedPlans(unavailable, task.getValue());
-        });
-        task.setOnFailed(event -> error("Could not import session availability", task.getException()));
-        Thread worker = new Thread(task, "room-availability-csv-import"); worker.setDaemon(true); worker.start();
-    }
-
-    private void exportSessionAvailability() {
-        RoomRepository.SessionOption session = sessionSelector.getValue();
-        if (session == null) { info("Choose an exam session", "Import an exam before exporting session availability."); return; }
-        FileChooser chooser = new FileChooser(); chooser.setTitle("Export room session availability");
-        chooser.setInitialFileName("room-availability-" + session.sessionId() + ".csv");
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV files", "*.csv"));
-        var file = chooser.showSaveDialog(getScene().getWindow());
-        if (file == null) return;
-        List<Room> rooms = List.copyOf(visibleRooms);
-        Map<String, Boolean> availability = sessionAvailability;
-        Task<Integer> task = new Task<>() {
-            @Override protected Integer call() throws Exception {
-                try (CSVPrinter printer = new CSVPrinter(Files.newBufferedWriter(file.toPath(), StandardCharsets.UTF_8), CSVFormat.DEFAULT)) {
-                    printer.printRecord("session_id", "room_id", "is_available");
-                    for (Room room : rooms) {
-                        Boolean available = availability.get(room.roomId());
-                        printer.printRecord(session.sessionId(), room.roomId(), available == null ? "NOT_SET" : available);
-                    }
-                }
-                return rooms.size();
-            }
-        };
-        task.setOnSucceeded(event -> info("Export complete", task.getValue() + " availability rows exported."));
-        task.setOnFailed(event -> error("Could not export session availability", task.getException()));
-        Thread worker = new Thread(task, "room-availability-csv-export"); worker.setDaemon(true); worker.start();
-    }
-
     private void editRoom(Room current) {
         Map<String, List<RoomCsvPreview.SeatPosition>> blocked;
         try { blocked = repository.findBlockedSeats(); }
@@ -392,7 +307,6 @@ public final class RoomDashboard extends BorderPane {
         TextField capacity = field(current == null ? "30" : String.valueOf(current.usableCapacity()));
         TextField blockedSeats = field(current == null ? "" : blockedText(blocked.getOrDefault(current.roomId(), List.of())));
         TextField blockedReason = field("Blocked by administrator");
-        TextField sourceNote = field(current == null ? "" : text(current.sourceNote()));
         ChoiceBox<String> capacityState = new ChoiceBox<>(FXCollections.observableArrayList("ESTIMATED", "VERIFIED", "OVERRIDDEN"));
         capacityState.setValue(current == null ? "ESTIMATED" : current.capacityStatus());
         id.setDisable(current != null);
@@ -402,7 +316,6 @@ public final class RoomDashboard extends BorderPane {
                 new Label("Centre (optional)"), centre, new Label("Room type"), roomType,
                 new Label("Seat grid rows × columns"), new HBox(8, rows, columns),
                 new Label("Usable capacity"), capacity, new Label("Capacity status"), capacityState,
-                new Label("Source / verification note (optional)"), sourceNote,
                 new Label("Blocked seats (row:column; row:column)"), blockedSeats,
                 new Label("Reason for blocked seats (required when any are blocked)"), blockedReason);
         form.setPadding(new Insets(12));
@@ -412,7 +325,7 @@ public final class RoomDashboard extends BorderPane {
             try {
                 new Room(id.getText(), buildingCode.getText(), roomCode.getText(), Integer.parseInt(floorNumber.getText()),
                         centre.getText(), roomType.getText(), Integer.parseInt(rows.getText()), Integer.parseInt(columns.getText()),
-                        Integer.parseInt(capacity.getText()), capacityState.getValue(), true, "OPERATIONAL", sourceNote.getText());
+                        Integer.parseInt(capacity.getText()), capacityState.getValue(), true, "OPERATIONAL");
                 List<RoomCsvPreview.SeatPosition> positions = parseBlocked(blockedSeats.getText());
                 validateBlocked(positions, Integer.parseInt(rows.getText()), Integer.parseInt(columns.getText()));
                 if (!positions.isEmpty() && blockedReason.getText().isBlank()) throw new IllegalArgumentException("Enter a reason for blocked seats.");
@@ -426,8 +339,7 @@ public final class RoomDashboard extends BorderPane {
                     Integer.parseInt(floorNumber.getText()), centre.getText(), roomType.getText(),
                     Integer.parseInt(rows.getText()), Integer.parseInt(columns.getText()),
                     Integer.parseInt(capacity.getText()), capacityState.getValue(),
-                    current == null || current.active(), current == null ? "OPERATIONAL" : current.dataLabel(),
-                    sourceNote.getText());
+                    current == null || current.active(), current == null ? "OPERATIONAL" : current.dataLabel());
             return new RoomEdit(room, parseBlocked(blockedSeats.getText()), blockedReason.getText());
         });
         Optional<RoomEdit> result = dialog.showAndWait();
@@ -439,42 +351,6 @@ public final class RoomDashboard extends BorderPane {
             refresh();
         } catch (SQLException | IllegalArgumentException exception) {
             error("Could not save room", exception);
-        }
-    }
-
-    private void reconcileSelected() {
-        Room selected = table.getSelectionModel().getSelectedItem();
-        if (selected == null) {
-            info("Select a room", "Choose a room row to reconcile with authoritative inventory.");
-            return;
-        }
-        Dialog<ButtonType> dialog = new Dialog<>();
-        dialog.setTitle("Reconcile room");
-        dialog.setHeaderText("Reconcile " + selected.roomId() + " with official inventory");
-        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-        TextField roomCode = field(selected.roomCode());
-        TextField capacity = field(String.valueOf(selected.usableCapacity()));
-        ChoiceBox<String> capacityStatus = new ChoiceBox<>(FXCollections.observableArrayList("VERIFIED", "OVERRIDDEN", "ESTIMATED"));
-        capacityStatus.setValue("VERIFIED");
-        TextField note = field(selected.sourceNote() == null || selected.sourceNote().isBlank()
-                ? "Authoritative inventory reconciled" : selected.sourceNote());
-        VBox form = new VBox(7,
-                new Label("Room ID"), field(selected.roomId()),
-                new Label("Official room code"), roomCode,
-                new Label("Official usable capacity"), capacity,
-                new Label("Capacity status"), capacityStatus,
-                new Label("Verification note / source"), note);
-        ((TextField) form.getChildren().get(1)).setDisable(true);
-        form.setPadding(new Insets(12));
-        dialog.getDialogPane().setContent(form);
-        if (dialog.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
-        try {
-            repository.reconcileRoom(selected.roomId(), roomCode.getText(),
-                    Integer.parseInt(capacity.getText().trim()), capacityStatus.getValue(), note.getText());
-            refresh();
-            info("Room reconciled", selected.roomId() + " was updated with authoritative room code and status.");
-        } catch (SQLException | IllegalArgumentException exception) {
-            error("Could not reconcile room", exception);
         }
     }
 
@@ -590,11 +466,11 @@ public final class RoomDashboard extends BorderPane {
             @Override protected Integer call() throws Exception {
                 try (CSVPrinter printer = new CSVPrinter(Files.newBufferedWriter(file.toPath(), StandardCharsets.UTF_8), CSVFormat.DEFAULT)) {
                     printer.printRecord("room_id", "building_code", "floor", "centre_name", "room_type", "num_rows",
-                            "num_cols", "blocked_seats", "usable_capacity", "capacity_status", "active", "data_label", "source_note");
+                            "num_cols", "blocked_seats", "usable_capacity", "capacity_status", "active", "data_label");
                     for (Room room : rows) printer.printRecord(room.roomId(), room.buildingCode(), room.floor(),
                             room.centreName(), room.roomType(), room.rows(), room.columns(),
                             blockedText(blocked.getOrDefault(room.roomId(), List.of())), room.usableCapacity(),
-                            room.capacityStatus(), room.active(), room.dataLabel(), room.sourceNote());
+                            room.capacityStatus(), room.active(), room.dataLabel());
                 }
                 return rows.size();
             }

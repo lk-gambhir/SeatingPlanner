@@ -42,7 +42,6 @@ public final class SeatAssignmentPlanner {
             }
             Seat selected = choices.stream().min(Comparator
                     .comparingInt((Seat seat) -> sameCourseNeighbors(candidate, seat, occupied, neighbors))
-                    .thenComparingInt(seat -> seat.id() == candidate.previousSeatId() ? 0 : 1)
                     .thenComparing(Comparator.comparingInt((Seat seat) -> freeNeighbors(seat, occupied, neighbors)).reversed())
                     .thenComparingInt(Seat::row).thenComparingInt(Seat::column).thenComparingInt(Seat::id))
                     .orElseThrow();
@@ -75,12 +74,7 @@ public final class SeatAssignmentPlanner {
     }
 
     public record Candidate(String candidateKey, String courseCode, String studentId,
-            Integer anonymousNumber, int previousSeatId, String sessionCourseId) {
-        public Candidate(String candidateKey, String courseCode, String studentId,
-                Integer anonymousNumber, int previousSeatId) {
-            this(candidateKey, courseCode, studentId, anonymousNumber, previousSeatId, null);
-        }
-    }
+            Integer anonymousNumber, String sessionCourseId) {}
     public record Seat(int id, int row, int column, boolean usable) {}
     public record Assignment(Candidate candidate, Seat seat, String origin) {
         public Assignment(Candidate candidate, Seat seat) { this(candidate, seat, "GENERATED"); }

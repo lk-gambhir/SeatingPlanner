@@ -20,8 +20,7 @@ public final class DatabaseBootstrap {
             "/db/migrations/V001__initial_schema.sql",
             "/db/migrations/V002__plan_snapshot_metadata.sql",
             "/db/migrations/V003__plan_display_snapshots.sql",
-            "/db/migrations/V004__import_source_headers.sql",
-            "/db/migrations/V005__room_source_note.sql");
+            "/db/migrations/V004__import_source_headers.sql");
 
     private DatabaseBootstrap() {
     }

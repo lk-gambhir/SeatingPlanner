@@ -68,7 +68,6 @@ public final class FeasibilityAnalyzer {
         int staffNeeded = selected.stream().mapToInt(room -> room.configuredCapacity() > 100 ? 3 : 2).sum();
         List<Staff> active = snapshot.staff().stream().filter(Staff::active)
                 .filter(staff -> !staff.unavailableSessions().contains(session.id()))
-                .filter(staff -> !staff.absentSessions().contains(session.id()))
                 .filter(staff -> !occupiedStaff.contains(staff.id())).sorted(Comparator.comparing(Staff::id)).toList();
         int potentiallyEligible = (int) active.stream().filter(staff -> selected.stream().anyMatch(room ->
                 eligibleForRoom(staff, allocation.coursesByRoom().getOrDefault(room.id(), List.of())))).count();
@@ -173,11 +172,10 @@ public final class FeasibilityAnalyzer {
                 seatRecordCount, usableSeatCount, capacityStatus, active, unavailableSessions, value); }
     }
     public record Staff(String id, boolean active, Set<String> courseCodes,
-            Set<String> unavailableSessions, Set<String> absentSessions) {
+            Set<String> unavailableSessions) {
         public Staff {
             courseCodes = Set.copyOf(courseCodes);
             unavailableSessions = Set.copyOf(unavailableSessions);
-            absentSessions = Set.copyOf(absentSessions);
         }
     }
 }

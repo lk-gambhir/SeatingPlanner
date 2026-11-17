@@ -13,15 +13,7 @@ public record Room(
         int usableCapacity,
         String capacityStatus,
         boolean active,
-        String dataLabel,
-        String sourceNote) {
-
-    public Room(String roomId, String buildingCode, String roomCode, int floor, String centreName,
-            String roomType, int rows, int columns, int usableCapacity, String capacityStatus,
-            boolean active, String dataLabel) {
-        this(roomId, buildingCode, roomCode, floor, centreName, roomType, rows, columns, usableCapacity,
-                capacityStatus, active, dataLabel, null);
-    }
+        String dataLabel) {
 
     public Room {
         if (roomId == null || roomId.isBlank()) throw new IllegalArgumentException("Room ID is required.");
@@ -39,7 +31,6 @@ public record Room(
         roomType = roomType == null || roomType.isBlank() ? "CLASSROOM" : roomType.trim();
         centreName = clean(centreName);
         dataLabel = dataLabel == null || dataLabel.isBlank() ? "OPERATIONAL" : dataLabel.trim();
-        sourceNote = clean(sourceNote);
     }
 
     private static String clean(String value) {

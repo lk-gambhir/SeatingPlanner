@@ -127,7 +127,6 @@ public final class FeasibilityRepository {
     private static List<FeasibilityAnalyzer.Staff> loadStaff(Connection connection, String eventId) throws SQLException {
         Map<String, Set<String>> courses = new HashMap<>();
         Map<String, Set<String>> unavailable = new HashMap<>();
-        Map<String, Set<String>> absent = new HashMap<>();
         try (var statement = connection.prepareStatement("""
                 SELECT rel.staff_id, c.course_code FROM staff_course_relationship rel
                 JOIN course c ON c.course_id=rel.course_id
@@ -146,25 +145,13 @@ public final class FeasibilityRepository {
                         .add(rows.getString("exam_session_id"));
             }
         }
-        try (var statement = connection.prepareStatement("""
-                SELECT a.staff_id, a.exam_session_id FROM staff_attendance a
-                JOIN exam_session x ON x.exam_session_id=a.exam_session_id
-                WHERE x.event_id=? AND a.attendance='ABSENT'
-                """)) {
-            statement.setString(1, eventId);
-            try (var rows = statement.executeQuery()) {
-                while (rows.next()) absent.computeIfAbsent(rows.getString("staff_id"), ignored -> new HashSet<>())
-                        .add(rows.getString("exam_session_id"));
-            }
-        }
         List<FeasibilityAnalyzer.Staff> staff = new ArrayList<>();
         try (var statement = connection.prepareStatement("SELECT staff_id, active FROM staff ORDER BY staff_id");
              var rows = statement.executeQuery()) {
             while (rows.next()) {
                 String staffId = rows.getString("staff_id");
                 staff.add(new FeasibilityAnalyzer.Staff(staffId, rows.getInt("active") == 1,
-                        courses.getOrDefault(staffId, Set.of()), unavailable.getOrDefault(staffId, Set.of()),
-                        absent.getOrDefault(staffId, Set.of())));
+                        courses.getOrDefault(staffId, Set.of()), unavailable.getOrDefault(staffId, Set.of())));
             }
         }
         return List.copyOf(staff);

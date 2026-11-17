@@ -105,9 +105,8 @@ public final class PlanValidator {
             var person = staff.get(staffId);
             if (!usedStaff.add(staffId)) add(violations, session.id(), room.id(),
                     "STAFF_ASSIGNED_TWICE", staffId + " appears more than once in this session.");
-            if (person == null || !person.active() || person.absentSessions().contains(session.id())
-                    || person.unavailableSessions().contains(session.id())) add(violations, session.id(), room.id(),
-                            "STAFF_UNAVAILABLE", staffId + " is inactive, absent, or unavailable.");
+            if (person == null || !person.active() || person.unavailableSessions().contains(session.id()))
+                add(violations, session.id(), room.id(), "STAFF_UNAVAILABLE", staffId + " is inactive or unavailable.");
             else if (courses.stream().anyMatch(person.courseCodes()::contains)) add(violations, session.id(), room.id(),
                     "STAFF_COURSE_CONFLICT", staffId + " is affiliated with a course examined in this room.");
         }

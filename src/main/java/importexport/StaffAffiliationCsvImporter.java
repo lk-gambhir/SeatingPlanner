@@ -37,9 +37,8 @@ public final class StaffAffiliationCsvImporter {
                 }
                 String staffColumn = headers.containsKey("staff_id") ? "staff_id" : "invigilator_id";
                 String courseColumn = headers.containsKey("course_code") ? "course_code" : "course_id";
-                if (!headers.containsKey(staffColumn) || !headers.containsKey(courseColumn)
-                        || !headers.containsKey("relationship_type")) {
-                    throw new IOException("CSV must contain staff_id or invigilator_id, course_code or course_id, and relationship_type columns.");
+                if (!headers.containsKey(staffColumn) || !headers.containsKey(courseColumn)) {
+                    throw new IOException("CSV must contain staff_id or invigilator_id, and course_code or course_id columns.");
                 }
                 for (CSVRecord record : parser) rows.add(readRow(record, headers, staffColumn, courseColumn, context, fileKeys));
             }
@@ -53,40 +52,38 @@ public final class StaffAffiliationCsvImporter {
         String raw = CsvImportValues.encodeRecord(record.toList());
         String staffId = value(record, headers, staffColumn).trim();
         String courseCode = value(record, headers, courseColumn).trim().toUpperCase(Locale.ROOT);
-        String type = value(record, headers, "relationship_type").trim().toUpperCase(Locale.ROOT);
         String dataLabel = value(record, headers, "data_label").trim();
         String courseId = context.courseIds().get(courseCode);
         String message = "";
         if (staffId.isBlank() || courseCode.isBlank()) message = "Staff ID and course code are required.";
         else if (!context.staffIds().contains(staffId)) message = "Unknown staff ID: " + staffId + ".";
         else if (courseId == null) message = "Course is not loaded: " + courseCode + ". Import the event before its staff-course links.";
-        else if (!type.equals("TEACHES") && !type.equals("EXCLUDED")) message = "Relationship type must be TEACHES or EXCLUDED.";
         if (!message.isEmpty()) return row(sourceRow, AffiliationImportPreview.Status.ERROR, staffId, courseId,
-                courseCode, type, dataLabel, message, raw);
+                courseCode, dataLabel, message, raw);
 
-        String key = key(staffId, courseId, type);
+        String key = key(staffId, courseId);
         if (!fileKeys.add(key)) return row(sourceRow, AffiliationImportPreview.Status.ERROR, staffId, courseId,
-                courseCode, type, dataLabel, "Duplicate staff/course relationship in this file.", raw);
+                courseCode, dataLabel, "Duplicate staff/course relationship in this file.", raw);
         if (context.existingKeys().contains(key)) return row(sourceRow, AffiliationImportPreview.Status.SKIP,
-                staffId, courseId, courseCode, type, dataLabel, "Relationship already exists; saved row will be kept.", raw);
-        return row(sourceRow, AffiliationImportPreview.Status.ADD, staffId, courseId, courseCode, type,
+                staffId, courseId, courseCode, dataLabel, "Relationship already exists; saved row will be kept.", raw);
+        return row(sourceRow, AffiliationImportPreview.Status.ADD, staffId, courseId, courseCode,
                 dataLabel.isBlank() ? "OPERATIONAL" : dataLabel, "", raw);
     }
 
-    public static String relationshipKey(String staffId, String courseId, String type) {
-        return key(staffId, courseId, type);
+    public static String relationshipKey(String staffId, String courseId) {
+        return key(staffId, courseId);
     }
 
-    private static String key(String staffId, String courseId, String type) {
-        return staffId + "\u0000" + courseId + "\u0000" + type;
+    private static String key(String staffId, String courseId) {
+        return staffId + "\u0000" + courseId;
     }
 
     private static AffiliationImportPreview.Row row(int sourceRow, AffiliationImportPreview.Status status,
-            String staffId, String courseId, String courseCode, String type, String dataLabel, String message, String raw) {
+            String staffId, String courseId, String courseCode, String dataLabel, String message, String raw) {
         String normalized = CsvImportValues.encodeTable(
-                List.of("staff_id", "course_code", "relationship_type", "data_label"),
-                List.of(staffId, courseCode, type, dataLabel.isBlank() ? "OPERATIONAL" : dataLabel));
-        return new AffiliationImportPreview.Row(sourceRow, status, staffId, courseId, courseCode, type,
+                List.of("staff_id", "course_code", "data_label"),
+                List.of(staffId, courseCode, dataLabel.isBlank() ? "OPERATIONAL" : dataLabel));
+        return new AffiliationImportPreview.Row(sourceRow, status, staffId, courseId, courseCode,
                 dataLabel.isBlank() ? "OPERATIONAL" : dataLabel, message, raw, normalized);
     }
 

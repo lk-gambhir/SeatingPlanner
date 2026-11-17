@@ -24,7 +24,7 @@ public final class RoomRepository {
              var statement = connection.prepareStatement("""
                      SELECT r.room_id, b.building_code, r.room_code, r.floor_number, c.centre_name,
                             r.room_type, r.row_count, r.column_count, r.usable_capacity,
-                            r.capacity_status, r.active, r.data_label, r.source_note
+                            r.capacity_status, r.active, r.data_label
                      FROM room r JOIN building b ON b.building_id=r.building_id
                      LEFT JOIN reporting_centre c ON c.centre_id=r.centre_id
                      ORDER BY b.building_code, r.floor_number, r.room_code
@@ -35,7 +35,7 @@ public final class RoomRepository {
                     rows.getString("room_code"), rows.getInt("floor_number"), rows.getString("centre_name"),
                     rows.getString("room_type"), rows.getInt("row_count"), rows.getInt("column_count"),
                     rows.getInt("usable_capacity"), rows.getString("capacity_status"),
-                    rows.getInt("active") == 1, rows.getString("data_label"), rows.getString("source_note")));
+                    rows.getInt("active") == 1, rows.getString("data_label")));
             return List.copyOf(rooms);
         }
     }
@@ -96,15 +96,10 @@ public final class RoomRepository {
         }
     }
 
+    /** Marks rooms available (true), unavailable (false) or back to default (null) for one session. */
     public void setSessionAvailability(String sessionId, List<String> roomIds, Boolean available) throws SQLException {
-        updateSessionAvailability(sessionId, roomIds.stream()
-                .map(roomId -> new AvailabilityUpdate(roomId, available)).toList());
-    }
-
-    public void updateSessionAvailability(String sessionId, List<AvailabilityUpdate> updates) throws SQLException {
         if (sessionId == null || sessionId.isBlank()) throw new IllegalArgumentException("Choose an exam session.");
-        if (updates.isEmpty()) throw new IllegalArgumentException("Select at least one room.");
-        String now = Instant.now().toString();
+        if (roomIds.isEmpty()) throw new IllegalArgumentException("Select at least one room.");
         try (Connection connection = connections.openConnection()) {
             connection.setAutoCommit(false);
             try (var clear = connection.prepareStatement("DELETE FROM room_availability WHERE room_id=? AND exam_session_id=?");
@@ -112,16 +107,15 @@ public final class RoomRepository {
                          INSERT INTO room_availability(room_id,exam_session_id,available,reason) VALUES (?,?,?,NULL)
                          ON CONFLICT(room_id,exam_session_id) DO UPDATE SET available=excluded.available, reason=NULL
                          """)) {
-                for (AvailabilityUpdate update : updates) {
-                    if (update.roomId() == null || update.roomId().isBlank()) throw new IllegalArgumentException("Room ID is required.");
-                    if (update.available() == null) {
-                        clear.setString(1, update.roomId()); clear.setString(2, sessionId); clear.executeUpdate();
+                for (String roomId : roomIds) {
+                    if (available == null) {
+                        clear.setString(1, roomId); clear.setString(2, sessionId); clear.executeUpdate();
                     } else {
-                        save.setString(1, update.roomId()); save.setString(2, sessionId);
-                        save.setInt(3, update.available() ? 1 : 0); save.executeUpdate();
+                        save.setString(1, roomId); save.setString(2, sessionId);
+                        save.setInt(3, available ? 1 : 0); save.executeUpdate();
                     }
                 }
-                bumpSessionRevision(connection, sessionId, now);
+                bumpSessionRevision(connection, sessionId, Instant.now().toString());
                 connection.commit();
             } catch (SQLException | RuntimeException exception) {
                 connection.rollback(); throw exception;
@@ -266,46 +260,6 @@ public final class RoomRepository {
         }
     }
 
-    public void reconcileRoom(String roomId, String newRoomCode, int newCapacity, String newStatus, String sourceNote) throws SQLException {
-        if (roomId == null || roomId.isBlank()) throw new IllegalArgumentException("Room ID is required.");
-        if (newRoomCode == null || newRoomCode.isBlank()) throw new IllegalArgumentException("Room code is required.");
-        if (newCapacity < 0) throw new IllegalArgumentException("Usable capacity must be non-negative.");
-        if (!"VERIFIED".equals(newStatus) && !"OVERRIDDEN".equals(newStatus) && !"ESTIMATED".equals(newStatus)) {
-            throw new IllegalArgumentException("Capacity status must be ESTIMATED, VERIFIED, or OVERRIDDEN.");
-        }
-        try (Connection connection = connections.openConnection()) {
-            connection.setAutoCommit(false);
-            try {
-                int seatCount;
-                int usableSeats;
-                try (var seats = connection.prepareStatement(
-                        "SELECT COUNT(*), SUM(CASE WHEN seat_status='USABLE' THEN 1 ELSE 0 END) FROM seat WHERE room_id=?")) {
-                    seats.setString(1, roomId);
-                    try (var row = seats.executeQuery()) { row.next(); seatCount = row.getInt(1); usableSeats = row.getInt(2); }
-                }
-                if (seatCount > 0 && newCapacity > usableSeats) {
-                    throw new IllegalArgumentException("Room capacity cannot exceed its usable seat grid; update the layout first.");
-                }
-                try (var statement = connection.prepareStatement("""
-                        UPDATE room SET room_code=?, usable_capacity=?, capacity_status=?, source_note=?, data_label='OPERATIONAL'
-                        WHERE room_id=?
-                        """)) {
-                    statement.setString(1, newRoomCode.trim());
-                    statement.setInt(2, newCapacity);
-                    statement.setString(3, newStatus.trim());
-                    statement.setString(4, sourceNote == null || sourceNote.isBlank() ? "Reconciled with official inventory" : sourceNote.trim());
-                    statement.setString(5, roomId);
-                    if (statement.executeUpdate() == 0) throw new IllegalArgumentException("Unknown room ID: " + roomId);
-                    bumpEventRevisions(connection);
-                    connection.commit();
-                }
-            } catch (SQLException | RuntimeException exception) {
-                connection.rollback();
-                throw exception;
-            }
-        }
-    }
-
     private static void save(Connection connection, Room room, List<RoomCsvPreview.SeatPosition> blocked,
             boolean update, String reason) throws SQLException {
         try (var building = connection.prepareStatement("""
@@ -324,11 +278,11 @@ public final class RoomRepository {
         }
         String sql = update ? """
                 UPDATE room SET building_id=?, centre_id=?, room_code=?, floor_number=?, room_type=?, row_count=?,
-                    column_count=?, usable_capacity=?, capacity_status=?, active=?, data_label=?, source_note=? WHERE room_id=?
+                    column_count=?, usable_capacity=?, capacity_status=?, active=?, data_label=? WHERE room_id=?
                 """ : """
                 INSERT INTO room(building_id, centre_id, room_code, floor_number, room_type, row_count,
-                    column_count, usable_capacity, capacity_status, active, data_label, source_note, room_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    column_count, usable_capacity, capacity_status, active, data_label, room_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         try (var statement = connection.prepareStatement(sql)) {
             statement.setString(1, room.buildingCode()); statement.setString(2, centreId);
@@ -336,8 +290,8 @@ public final class RoomRepository {
             statement.setString(5, room.roomType()); statement.setInt(6, room.rows());
             statement.setInt(7, room.columns()); statement.setInt(8, room.usableCapacity());
             statement.setString(9, room.capacityStatus()); statement.setInt(10, room.active() ? 1 : 0);
-            statement.setString(11, room.dataLabel()); statement.setString(12, room.sourceNote());
-            statement.setString(13, room.roomId());
+            statement.setString(11, room.dataLabel());
+            statement.setString(12, room.roomId());
             if (update && statement.executeUpdate() == 0) throw new IllegalArgumentException("Unknown room ID: " + room.roomId());
             if (!update) statement.executeUpdate();
         }
@@ -383,7 +337,6 @@ public final class RoomRepository {
         @Override public String toString() { return eventCode + " · " + date + " " + startTime; }
     }
 
-    public record AvailabilityUpdate(String roomId, Boolean available) {}
 
     public record AssignedPlanView(String eventCode, int version, String planStatus, boolean stale,
             String buildingCode, String roomCode) {}

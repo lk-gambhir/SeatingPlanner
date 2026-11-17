@@ -76,20 +76,18 @@ public final class RoomCsvImporter {
             int capacity = integer(record, headers, "usable_capacity", rowNumber);
             String activeValue = value(record, headers, "active");
             boolean active = activeValue.isBlank() || parseActive(activeValue, rowNumber);
-            String note = value(record, headers, "source_note");
-            if (note.isBlank()) note = value(record, headers, "note");
             List<RoomCsvPreview.SeatPosition> blocked = parseBlocked(value(record, headers, "blocked_seats"), roomRows, columns);
             Room room = new Room(id, building, roomCode, floor, value(record, headers, "centre_name"),
                     value(record, headers, "room_type"), roomRows, columns, capacity,
                     value(record, headers, "capacity_status").trim().toUpperCase(Locale.ROOT), active,
-                    value(record, headers, "data_label"), note);
+                    value(record, headers, "data_label"));
             String normalized = CsvImportValues.encodeTable(
                     List.of("room_id", "building_code", "room_code", "floor", "centre_name", "room_type",
-                            "num_rows", "num_cols", "blocked_seats", "usable_capacity", "capacity_status", "active", "data_label", "source_note"),
+                            "num_rows", "num_cols", "blocked_seats", "usable_capacity", "capacity_status", "active", "data_label"),
                     List.of(room.roomId(), room.buildingCode(), room.roomCode(), String.valueOf(room.floor()),
                             text(room.centreName()), room.roomType(), String.valueOf(room.rows()), String.valueOf(room.columns()),
                             blockedText(blocked), String.valueOf(room.usableCapacity()), room.capacityStatus(),
-                            String.valueOf(room.active()), room.dataLabel(), text(room.sourceNote())));
+                            String.valueOf(room.active()), room.dataLabel()));
             String key = building + "/" + roomCode;
             boolean duplicateId = !fileIds.add(id);
             boolean duplicateCode = !fileCodes.add(key);
@@ -131,7 +129,6 @@ public final class RoomCsvImporter {
         compare(changes, "num_cols", saved.columns(), incoming.columns());
         compare(changes, "usable_capacity", saved.usableCapacity(), incoming.usableCapacity());
         compare(changes, "capacity_status", saved.capacityStatus(), incoming.capacityStatus());
-        compare(changes, "source_note", saved.sourceNote(), incoming.sourceNote());
         compare(changes, "data_label", saved.dataLabel(), incoming.dataLabel());
         compare(changes, "blocked_seats", positions(savedBlocked), positions(incomingBlocked));
         return changes.isEmpty() ? "Room already exists; the CSV row matches saved data."

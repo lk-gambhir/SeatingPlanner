@@ -94,7 +94,6 @@ public final class StudentDashboard extends BorderPane {
         column("Section", student -> text(student.section()), 100);
         column("Registrations", student -> String.valueOf(student.enrollmentCount()), 110);
         column("Status", student -> student.active() ? "Active" : "Inactive", 90);
-        table.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         table.setItems(visibleStudents);
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
         table.setPlaceholder(new Label("No students match these filters."));
@@ -147,20 +146,12 @@ public final class StudentDashboard extends BorderPane {
         for (ChoiceBox<String> filter : List.of(program, semester, section, active)) filter.setOnAction(event -> applyFilter());
         Button add = new Button("Add student"); add.setOnAction(event -> editStudent(null));
         Button edit = new Button("Edit selected"); edit.setOnAction(event -> {
-            if (table.getSelectionModel().getSelectedItems().size() != 1) {
-                info("Select one student", "Choose exactly one student row to edit."); return;
+            if (table.getSelectionModel().getSelectedItem() == null) {
+                info("Select one student", "Choose a student row to edit."); return;
             }
             editStudent(table.getSelectionModel().getSelectedItem());
         });
         Button status = new Button("Change status"); status.setOnAction(event -> toggleSelected());
-        Button selectVisible = new Button("Select visible");
-        selectVisible.setOnAction(event -> { table.getSelectionModel().clearSelection(); table.getSelectionModel().selectAll(); });
-        Button clearSelection = new Button("Clear selection");
-        clearSelection.setOnAction(event -> table.getSelectionModel().clearSelection());
-        Button setActive = new Button("Set selected active");
-        Button setInactive = new Button("Set selected inactive");
-        setActive.setOnAction(event -> setSelectedStatus(true, setActive, setInactive));
-        setInactive.setOnAction(event -> setSelectedStatus(false, setActive, setInactive));
         Button importCsv = new Button("Import CSV"); importCsv.setOnAction(event -> importCsv(importCsv));
         Button exportCsv = new Button("Export CSV"); exportCsv.setOnAction(event -> exportCsv(exportCsv));
         HBox filters = new HBox(10, search, program, semester, section, active, count);
@@ -173,11 +164,10 @@ public final class StudentDashboard extends BorderPane {
         Button exportEnrollments = new Button("Export enrollments CSV");
         exportEnrollments.setOnAction(event -> exportEnrollments());
         HBox actions = new HBox(8, add, edit, status, importCsv, exportCsv);
-        HBox selectionActions = new HBox(8, selectVisible, clearSelection, setActive, setInactive);
         HBox enrollmentControls = new HBox(8, new Label("Target exam"), enrollmentEvent,
                 importEnrollments, exportEnrollments, enrollmentStatus);
         Label countOnlyNote = new Label("Named registrations are optional. Without a roster, seating uses imported course counts and anonymous candidate labels.");
-        VBox controls = new VBox(12, summary, filters, actions, selectionActions, enrollmentControls, countOnlyNote);
+        VBox controls = new VBox(12, summary, filters, actions, enrollmentControls, countOnlyNote);
         controls.setPadding(new Insets(18, 24, 8, 24));
         setTop(controls);
     }
@@ -341,45 +331,6 @@ public final class StudentDashboard extends BorderPane {
         Student selected = table.getSelectionModel().getSelectedItem(); if (selected == null) return;
         try { repository.setActive(selected.studentId(), !selected.active()); refresh(); }
         catch (SQLException | IllegalArgumentException exception) { error("Could not change student status", exception); }
-    }
-
-    private void setSelectedStatus(boolean makeActive, Button activeButton, Button inactiveButton) {
-        List<String> studentIds = table.getSelectionModel().getSelectedItems().stream()
-                .filter(student -> student.active() != makeActive).map(Student::studentId).toList();
-        if (studentIds.isEmpty()) {
-            info("No status changes needed", "Select visible students whose status needs to change.");
-            return;
-        }
-        String status = makeActive ? "active" : "inactive";
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
-                "Set " + studentIds.size() + " selected students to " + status + "?",
-                ButtonType.OK, ButtonType.CANCEL);
-        confirm.setTitle("Change student status");
-        confirm.setHeaderText("Confirm the selected student updates");
-        if (confirm.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
-
-        activeButton.setDisable(true);
-        inactiveButton.setDisable(true);
-        Task<Void> task = new Task<>() {
-            @Override protected Void call() throws Exception {
-                repository.setActive(studentIds, makeActive);
-                return null;
-            }
-        };
-        task.setOnSucceeded(event -> {
-            activeButton.setDisable(false);
-            inactiveButton.setDisable(false);
-            try { refresh(); }
-            catch (SQLException exception) { error("Status changed but dashboard refresh failed", exception); }
-        });
-        task.setOnFailed(event -> {
-            activeButton.setDisable(false);
-            inactiveButton.setDisable(false);
-            error("Could not change selected student statuses", task.getException());
-        });
-        Thread worker = new Thread(task, "student-status-update");
-        worker.setDaemon(true);
-        worker.start();
     }
 
     private void importCsv(Button importButton) {

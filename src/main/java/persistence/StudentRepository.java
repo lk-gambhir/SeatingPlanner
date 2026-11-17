@@ -311,23 +311,16 @@ public final class StudentRepository {
     }
 
     public void setActive(String studentId, boolean active) throws SQLException {
-        setActive(List.of(studentId), active);
-    }
-
-    public void setActive(List<String> studentIds, boolean active) throws SQLException {
-        if (studentIds.isEmpty()) throw new IllegalArgumentException("Select at least one student.");
         String now = Instant.now().toString();
         try (Connection connection = connections.openConnection()) {
             connection.setAutoCommit(false);
             try {
                 try (var statement = connection.prepareStatement("UPDATE student SET active=? WHERE student_id=?")) {
-                    for (String studentId : studentIds) {
-                        statement.setInt(1, active ? 1 : 0); statement.setString(2, studentId);
-                        if (statement.executeUpdate() == 0) {
-                            throw new IllegalArgumentException("Unknown student ID: " + studentId);
-                        }
-                        bumpStudentEventRevisions(connection, studentId, now);
+                    statement.setInt(1, active ? 1 : 0); statement.setString(2, studentId);
+                    if (statement.executeUpdate() == 0) {
+                        throw new IllegalArgumentException("Unknown student ID: " + studentId);
                     }
+                    bumpStudentEventRevisions(connection, studentId, now);
                 }
                 connection.commit();
             } catch (SQLException | RuntimeException exception) {
