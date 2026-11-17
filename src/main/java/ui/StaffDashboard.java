@@ -5,7 +5,6 @@ import domain.StaffMember;
 import importexport.AffiliationImportPreview;
 import importexport.StaffAffiliationCsvImporter;
 import importexport.StaffCsvImporter;
-import importexport.SessionStaffStatusCsvImporter;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVPrinter;
 import persistence.StaffRepository;
@@ -38,7 +37,6 @@ import java.nio.file.Files;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 
 /** Staff records and CSV tools. */
 public final class StaffDashboard extends BorderPane {
@@ -50,7 +48,6 @@ public final class StaffDashboard extends BorderPane {
     private final ChoiceBox<String> activeFilter = new ChoiceBox<>(FXCollections.observableArrayList("All", "Active", "Inactive"));
     private final ChoiceBox<StaffRepository.SessionOption> sessionSelector = new ChoiceBox<>();
     private final ChoiceBox<String> availabilityAction = new ChoiceBox<>(FXCollections.observableArrayList("Not set", "Available", "Unavailable"));
-    private final ChoiceBox<String> attendanceAction = new ChoiceBox<>(FXCollections.observableArrayList("Not recorded", "Present", "Absent"));
     private final Label count = new Label();
     private final Label summary = new Label();
     private final Label sessionStatus = new Label("Session controls are available after an exam is imported.");
@@ -60,7 +57,7 @@ public final class StaffDashboard extends BorderPane {
     private final javafx.scene.control.ListView<StaffRepository.AffiliationView> affiliationList = new javafx.scene.control.ListView<>();
     private final Button importLinksButton = new Button("Import course links");
     private java.util.Map<String, Integer> affiliationCounts = java.util.Map.of();
-    private java.util.Map<String, StaffRepository.SessionStaffStatus> sessionStatuses = java.util.Map.of();
+    private java.util.Map<String, String> sessionAvailability = java.util.Map.of();
     private List<StaffRepository.RoomAssignmentSummary> sessionAssignments = List.of();
 
     public StaffDashboard(StaffRepository repository) throws SQLException {
@@ -79,8 +76,7 @@ public final class StaffDashboard extends BorderPane {
         column("Designation", staff -> text(staff.designation()), 220);
         column("Course links", staff -> String.valueOf(affiliationCounts.getOrDefault(staff.staffId(), 0)), 100);
         column("Status", staff -> staff.active() ? "Active" : "Inactive", 100);
-        column("Availability", staff -> displayStatus(sessionStatuses.get(staff.staffId()), true), 115);
-        column("Attendance", staff -> displayStatus(sessionStatuses.get(staff.staffId()), false), 115);
+        column("Availability", staff -> displayStatus(sessionAvailability.get(staff.staffId())), 115);
         table.getSelectionModel().selectedItemProperty().addListener((observable, oldValue, staff) -> showAffiliations(staff));
         table.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         table.setItems(visibleStaff);
@@ -111,8 +107,6 @@ public final class StaffDashboard extends BorderPane {
         });
         Button toggle = new Button("Change status");
         toggle.setOnAction(event -> toggleSelected());
-        Button deactivate = new Button("Deactivate selected");
-        deactivate.setOnAction(event -> deactivateSelected());
         Button importCsv = new Button("Import CSV");
         importCsv.setOnAction(event -> importCsv());
         Button exportCsv = new Button("Export CSV");
@@ -129,32 +123,23 @@ public final class StaffDashboard extends BorderPane {
         clearSelection.setOnAction(event -> table.getSelectionModel().clearSelection());
 
         HBox filters = new HBox(10, search, activeFilter, count);
-        HBox actions = new HBox(8, add, edit, toggle, deactivate, importCsv, exportCsv, importLinksButton, exportLinks,
+        HBox actions = new HBox(8, add, edit, toggle, importCsv, exportCsv, importLinksButton, exportLinks,
                 selectVisible, clearSelection);
         sessionSelector.setOnAction(event -> refreshSessionStatuses());
         viewAssignments.setOnAction(event -> showSessionAssignments());
         availabilityAction.setValue("Available");
-        attendanceAction.setValue("Present");
         Button setAvailability = new Button("Apply availability to selected");
-        setAvailability.setOnAction(event -> applySessionStatus(true));
-        Button setAttendance = new Button("Apply attendance to selected");
-        setAttendance.setOnAction(event -> applySessionStatus(false));
-        Button importSessionCsv = new Button("Import session status CSV");
-        importSessionCsv.setOnAction(event -> importSessionStatuses());
-        Button exportSessionCsv = new Button("Export session status CSV");
-        exportSessionCsv.setOnAction(event -> exportSessionStatuses());
+        setAvailability.setOnAction(event -> applySessionAvailability());
         HBox sessionControls = new HBox(8, new Label("Exam session"), sessionSelector, sessionStatus);
         HBox assignmentControls = new HBox(8, assignmentSummary, viewAssignments);
-        HBox statusControls = new HBox(8, availabilityAction, setAvailability, attendanceAction, setAttendance,
-                importSessionCsv, exportSessionCsv);
+        HBox statusControls = new HBox(8, availabilityAction, setAvailability);
         Button addLink = new Button("Add link"); addLink.setOnAction(event -> addAffiliation());
         Button removeLink = new Button("Remove selected link"); removeLink.setOnAction(event -> removeAffiliation());
         affiliationList.setPlaceholder(new Label("No course relationships saved for this staff member."));
         affiliationList.setCellFactory(list -> new javafx.scene.control.ListCell<>() {
             @Override protected void updateItem(StaffRepository.AffiliationView item, boolean empty) {
                 super.updateItem(item, empty);
-                setText(empty || item == null ? null : item.courseCode() + " · " + item.type()
-                        + " · " + item.dataLabel());
+                setText(empty || item == null ? null : item.courseCode() + " · " + item.dataLabel());
             }
         });
         HBox affiliationActions = new HBox(8, addLink, removeLink);
@@ -214,20 +199,20 @@ public final class StaffDashboard extends BorderPane {
     private void refreshSessionStatuses() {
         StaffRepository.SessionOption session = sessionSelector.getValue();
         if (session == null) {
-            sessionStatuses = java.util.Map.of();
+            sessionAvailability = java.util.Map.of();
             sessionAssignments = List.of();
             sessionStatus.setText("Session controls are available after an exam is imported.");
             assignmentSummary.setText("No saved room assignments for this session.");
         } else {
             try {
-                sessionStatuses = repository.findSessionStatuses(session.sessionId());
+                sessionAvailability = repository.findSessionAvailability(session.sessionId());
                 sessionAssignments = repository.findSessionAssignments(session.sessionId());
                 long shortages = sessionAssignments.stream().filter(StaffRepository.RoomAssignmentSummary::hasShortage).count();
                 assignmentSummary.setText(sessionAssignments.size() + " rooms assigned · " + shortages + " staffing shortages");
                 viewAssignments.setDisable(sessionAssignments.isEmpty());
                 sessionStatus.setText("Select staff rows; changes mark the plan data for review.");
             } catch (SQLException exception) {
-                sessionStatuses = java.util.Map.of();
+                sessionAvailability = java.util.Map.of();
                 sessionAssignments = List.of();
                 assignmentSummary.setText("Could not load room assignments.");
                 error("Could not load session staff status", exception);
@@ -258,133 +243,37 @@ public final class StaffDashboard extends BorderPane {
         dialog.showAndWait();
     }
 
-    private void applySessionStatus(boolean updateAvailability) {
+    private void applySessionAvailability() {
         StaffRepository.SessionOption session = sessionSelector.getValue();
         List<String> staffIds = table.getSelectionModel().getSelectedItems().stream()
                 .filter(visibleStaff::contains).map(StaffMember::staffId).toList();
-        String availability = updateAvailability ? switch (availabilityAction.getValue()) {
+        String availability = switch (availabilityAction.getValue()) {
             case "Available" -> "AVAILABLE"; case "Unavailable" -> "UNAVAILABLE"; default -> "NOT_SET";
-        } : null;
-        String attendance = updateAvailability ? null : switch (attendanceAction.getValue()) {
-            case "Present" -> "PRESENT"; case "Absent" -> "ABSENT"; default -> "NOT_RECORDED";
         };
         if (session == null) { info("Choose an exam session", "Import an exam before changing session status."); return; }
         if (staffIds.isEmpty()) { info("Select visible staff", "Select at least one visible staff row first."); return; }
-        boolean mayAffectPlans = "UNAVAILABLE".equals(availability) || "ABSENT".equals(attendance);
+        boolean mayAffectPlans = "UNAVAILABLE".equals(availability);
         Task<List<StaffRepository.AssignedRoomView>> task = new Task<>() {
             @Override protected List<StaffRepository.AssignedRoomView> call() throws Exception {
-                repository.setSessionStatuses(session.sessionId(), staffIds, availability, attendance);
+                repository.setSessionAvailability(session.sessionId(), staffIds, availability);
                 return mayAffectPlans ? repository.findAssignedRooms(session.sessionId(), staffIds) : List.of();
             }
         };
         task.setOnSucceeded(event -> {
             refreshSessionStatuses();
             if (mayAffectPlans) showAffectedRooms(staffIds, task.getValue());
-            else info("Session status updated", staffIds.size() + " staff records updated.");
+            else info("Session availability updated", staffIds.size() + " staff records updated.");
         });
-        task.setOnFailed(event -> error("Could not update session status", task.getException()));
-        start(task, "staff-session-status-update");
+        task.setOnFailed(event -> error("Could not update session availability", task.getException()));
+        start(task, "staff-session-availability-update");
     }
 
-    private static String displayStatus(StaffRepository.SessionStaffStatus status, boolean availability) {
-        if (status == null) return "—";
-        String value = availability ? status.availability() : status.attendance();
-        return switch (value) {
-            case "NOT_SET" -> "Not set"; case "NOT_RECORDED" -> "Not recorded";
-            case "AVAILABLE" -> "Available"; case "UNAVAILABLE" -> "Unavailable";
-            case "PRESENT" -> "Present"; case "ABSENT" -> "Absent"; default -> value;
+    private static String displayStatus(String availability) {
+        if (availability == null) return "—";
+        return switch (availability) {
+            case "NOT_SET" -> "Not set"; case "AVAILABLE" -> "Available"; case "UNAVAILABLE" -> "Unavailable";
+            default -> availability;
         };
-    }
-
-    private void importSessionStatuses() {
-        StaffRepository.SessionOption session = sessionSelector.getValue();
-        if (session == null) { info("Choose an exam session", "Import an exam before importing session statuses."); return; }
-        FileChooser chooser = new FileChooser(); chooser.setTitle("Choose session status CSV");
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV files", "*.csv"));
-        var file = chooser.showOpenDialog(getScene().getWindow());
-        if (file == null) return;
-        Set<String> knownStaff = allStaff.stream().map(StaffMember::staffId).collect(java.util.stream.Collectors.toSet());
-        Task<SessionStaffStatusCsvImporter.Preview> task = new Task<>() {
-            @Override protected SessionStaffStatusCsvImporter.Preview call() throws Exception {
-                return new SessionStaffStatusCsvImporter().preview(file.toPath(), session.sessionId(), knownStaff);
-            }
-        };
-        task.setOnSucceeded(event -> reviewSessionStatuses(session, task.getValue()));
-        task.setOnFailed(event -> error("Could not read session status CSV", task.getException()));
-        start(task, "session-status-csv-preview");
-    }
-
-    private void reviewSessionStatuses(StaffRepository.SessionOption session,
-            SessionStaffStatusCsvImporter.Preview preview) {
-        StringBuilder details = new StringBuilder("File: ").append(preview.fileName())
-                .append("\nRows: ").append(preview.rows().size())
-                .append("\nValid: ").append(preview.validRows().size())
-                .append("\nErrors: ").append(preview.rows().stream().filter(row -> !row.error().isEmpty()).count()).append("\n\n");
-        for (var row : preview.rows()) details.append("Row ").append(row.sourceRow()).append(" · ")
-                .append(row.staffId()).append(" · ").append(row.availability())
-                .append(" · ").append(row.attendance()).append(" · ")
-                .append(row.error().isEmpty() ? "READY" : row.error()).append('\n');
-        TextArea content = new TextArea(details.toString()); content.setEditable(false); content.setWrapText(true);
-        Alert dialog = new Alert(preview.hasErrors() ? Alert.AlertType.ERROR : Alert.AlertType.CONFIRMATION);
-        dialog.setTitle("Review session statuses");
-        dialog.setHeaderText(preview.hasErrors() ? "Fix CSV errors before importing." : "Review changes before applying.");
-        dialog.getDialogPane().setContent(content);
-        dialog.getButtonTypes().setAll(preview.hasErrors() ? ButtonType.CLOSE : ButtonType.OK, ButtonType.CANCEL);
-        Optional<ButtonType> result = dialog.showAndWait();
-        if (preview.hasErrors() || result.orElse(ButtonType.CANCEL) != ButtonType.OK) return;
-        Task<Void> save = new Task<>() {
-            @Override protected Void call() throws Exception {
-                var updates = preview.validRows().stream().map(row -> new StaffRepository.SessionStatusUpdate(
-                        row.staffId(), row.availability(), row.attendance())).toList();
-                repository.updateSessionStatuses(session.sessionId(), updates); return null;
-            }
-        };
-        save.setOnSucceeded(event -> {
-            refreshSessionStatuses();
-            List<String> affectedStaff = preview.validRows().stream()
-                    .filter(row -> row.availability().equals("UNAVAILABLE") || row.attendance().equals("ABSENT"))
-                    .map(SessionStaffStatusCsvImporter.Row::staffId).distinct().toList();
-            if (affectedStaff.isEmpty()) info("Import complete", preview.rows().size() + " staff statuses updated.");
-            else findAndShowAffectedRooms(session.sessionId(), affectedStaff);
-        });
-        save.setOnFailed(event -> error("Could not save session statuses", save.getException()));
-        start(save, "session-status-csv-import");
-    }
-
-    private void exportSessionStatuses() {
-        StaffRepository.SessionOption session = sessionSelector.getValue();
-        if (session == null) { info("Choose an exam session", "Import an exam before exporting session statuses."); return; }
-        FileChooser chooser = new FileChooser(); chooser.setTitle("Export session status CSV");
-        chooser.setInitialFileName("staff-status-" + session.eventCode() + "-" + session.date() + ".csv");
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV files", "*.csv"));
-        var file = chooser.showSaveDialog(getScene().getWindow()); if (file == null) return;
-        Task<Integer> task = new Task<>() {
-            @Override protected Integer call() throws Exception {
-                List<StaffRepository.SessionAttendanceRow> staff = repository.findSessionAttendance(session.sessionId());
-                try (CSVPrinter csv = new CSVPrinter(Files.newBufferedWriter(file.toPath(), StandardCharsets.UTF_8), CSVFormat.DEFAULT)) {
-                    csv.printRecord("session_id", "staff_id", "availability", "attendance", "event_code",
-                            "exam_date", "start_time", "full_name", "department", "active", "assigned_rooms");
-                    for (var row : staff) csv.printRecord(row.sessionId(), row.staffId(), row.availability(),
-                            row.attendance(), row.eventCode(), row.date(), row.startTime(), row.fullName(),
-                            row.department(), row.active(), row.assignedRooms());
-                }
-                return staff.size();
-            }
-        };
-        task.setOnSucceeded(event -> info("Export complete", task.getValue() + " attendance rows exported."));
-        task.setOnFailed(event -> error("Could not export session statuses", task.getException()));
-        start(task, "session-status-csv-export");
-    }
-
-    private void findAndShowAffectedRooms(String sessionId, List<String> staffIds) {
-        Task<List<StaffRepository.AssignedRoomView>> task = new Task<>() {
-            @Override protected List<StaffRepository.AssignedRoomView> call() throws Exception {
-                return repository.findAssignedRooms(sessionId, staffIds);
-            }
-        };
-        task.setOnSucceeded(event -> showAffectedRooms(staffIds, task.getValue()));
-        task.setOnFailed(event -> error("Statuses saved, but affected rooms could not be loaded", task.getException()));
-        start(task, "staff-affected-rooms");
     }
 
     private void showAffectedRooms(List<String> staffIds, List<StaffRepository.AssignedRoomView> rooms) {
@@ -418,16 +307,14 @@ public final class StaffDashboard extends BorderPane {
         StaffMember staff = table.getSelectionModel().getSelectedItem();
         if (staff == null) return;
         TextField course = field(""); course.setPromptText("Course code");
-        ChoiceBox<String> type = new ChoiceBox<>(FXCollections.observableArrayList("TEACHES", "EXCLUDED"));
-        type.setValue("TEACHES");
         Dialog<ButtonType> dialog = new Dialog<>(); dialog.setTitle("Add course link");
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-        dialog.getDialogPane().setContent(new VBox(8, new Label("Course code"), course, new Label("Relationship"), type));
+        dialog.getDialogPane().setContent(new VBox(8,
+                new Label("Course code (this staff member will not invigilate rooms holding it)"), course));
         Optional<ButtonType> result = dialog.showAndWait();
         if (result.orElse(ButtonType.CANCEL) != ButtonType.OK) return;
         try {
-            repository.addAffiliationByCourseCode(staff.staffId(), course.getText(),
-                    StaffRepository.AffiliationType.valueOf(type.getValue()));
+            repository.addAffiliationByCourseCode(staff.staffId(), course.getText());
             refresh(); showAffiliations(staff);
         } catch (SQLException | IllegalArgumentException exception) { error("Could not add course link", exception); }
     }
@@ -437,7 +324,7 @@ public final class StaffDashboard extends BorderPane {
         StaffRepository.AffiliationView selected = affiliationList.getSelectionModel().getSelectedItem();
         if (staff == null || selected == null) return;
         try {
-            repository.removeAffiliationByCourseCode(staff.staffId(), selected.courseCode(), selected.type());
+            repository.removeAffiliationByCourseCode(staff.staffId(), selected.courseCode());
             refresh(); showAffiliations(staff);
         } catch (SQLException | IllegalArgumentException exception) { error("Could not remove course link", exception); }
     }
@@ -468,8 +355,7 @@ public final class StaffDashboard extends BorderPane {
         for (AffiliationImportPreview.Row row : preview.rows()) {
             if (row.status() == AffiliationImportPreview.Status.ADD && shown++ >= 15) continue;
             text.append("Row ").append(row.sourceRow()).append(" · ").append(row.status()).append(" · ")
-                    .append(row.staffId()).append(" · ").append(row.courseCode()).append(" · ")
-                    .append(row.relationshipType());
+                    .append(row.staffId()).append(" · ").append(row.courseCode());
             if (!row.message().isBlank()) text.append(" · ").append(row.message());
             text.append('\n');
         }
@@ -507,10 +393,10 @@ public final class StaffDashboard extends BorderPane {
         chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV files", "*.csv"));
         var file = chooser.showSaveDialog(getScene().getWindow()); if (file == null) return;
         try (CSVPrinter printer = new CSVPrinter(Files.newBufferedWriter(file.toPath(), StandardCharsets.UTF_8), CSVFormat.DEFAULT)) {
-            printer.printRecord("staff_id", "course_code", "relationship_type", "data_label");
+            printer.printRecord("staff_id", "course_code", "data_label");
             List<StaffRepository.AffiliationExportRow> rows = repository.findAllAffiliations();
             for (StaffRepository.AffiliationExportRow row : rows) printer.printRecord(row.staffId(), row.courseCode(),
-                    row.relationshipType(), row.dataLabel());
+                    row.dataLabel());
             info("Export complete", rows.size() + " staff-course links exported.");
         } catch (IOException | SQLException exception) { error("Could not export course links", exception); }
     }
@@ -560,24 +446,6 @@ public final class StaffDashboard extends BorderPane {
             refresh();
         } catch (SQLException | IllegalArgumentException exception) {
             error("Could not change staff status", exception);
-        }
-    }
-
-    private void deactivateSelected() {
-        List<String> staffIds = table.getSelectionModel().getSelectedItems().stream()
-                .filter(visibleStaff::contains).filter(StaffMember::active).map(StaffMember::staffId).toList();
-        if (staffIds.isEmpty()) { info("Select active staff", "Select one or more active staff rows first."); return; }
-        Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION,
-                "Deactivate " + staffIds.size() + " selected staff records? Saved plans may need review.",
-                ButtonType.OK, ButtonType.CANCEL);
-        confirmation.setTitle("Confirm staff deactivation");
-        confirmation.setHeaderText("Deactivate selected staff");
-        if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
-        try {
-            repository.deactivate(staffIds);
-            refresh();
-        } catch (SQLException | IllegalArgumentException exception) {
-            error("Could not deactivate staff", exception);
         }
     }
 

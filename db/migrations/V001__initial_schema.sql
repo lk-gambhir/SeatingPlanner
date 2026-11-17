@@ -159,13 +159,13 @@ CREATE TABLE staff (
     data_label  TEXT NOT NULL DEFAULT 'OPERATIONAL'
 );
 
+-- A linked staff member must not invigilate a room in which that course is examined.
 CREATE TABLE staff_course_relationship (
     staff_id          TEXT NOT NULL REFERENCES staff(staff_id) ON DELETE CASCADE,
     course_id         TEXT NOT NULL REFERENCES course(course_id),
-    relationship_type TEXT NOT NULL CHECK (relationship_type IN ('TEACHES','EXCLUDED')),
     import_batch_id   TEXT REFERENCES import_batch(import_batch_id),
     data_label        TEXT NOT NULL DEFAULT 'OPERATIONAL',
-    PRIMARY KEY (staff_id, course_id, relationship_type)
+    PRIMARY KEY (staff_id, course_id)
 );
 
 CREATE TABLE staff_availability (
@@ -173,14 +173,6 @@ CREATE TABLE staff_availability (
     exam_session_id TEXT NOT NULL REFERENCES exam_session(exam_session_id) ON DELETE CASCADE,
     availability    TEXT NOT NULL CHECK (availability IN ('AVAILABLE','UNAVAILABLE')),
     reason          TEXT,
-    PRIMARY KEY (staff_id, exam_session_id)
-);
-
-CREATE TABLE staff_attendance (
-    staff_id        TEXT NOT NULL REFERENCES staff(staff_id) ON DELETE CASCADE,
-    exam_session_id TEXT NOT NULL REFERENCES exam_session(exam_session_id) ON DELETE CASCADE,
-    attendance      TEXT NOT NULL CHECK (attendance IN ('PRESENT','ABSENT','NOT_RECORDED')),
-    marked_at       TEXT,
     PRIMARY KEY (staff_id, exam_session_id)
 );
 
@@ -294,9 +286,8 @@ CREATE INDEX ix_session_course_course ON session_course(course_id, exam_session_
 CREATE INDEX ix_session_course_batch ON session_course(import_batch_id);
 CREATE INDEX ix_enrollment_course_status ON enrollment(session_course_id, registration_status, student_id);
 CREATE INDEX ix_staff_active_department ON staff(active, department);
-CREATE INDEX ix_staff_course_course ON staff_course_relationship(course_id, relationship_type, staff_id);
+CREATE INDEX ix_staff_course_course ON staff_course_relationship(course_id, staff_id);
 CREATE INDEX ix_staff_availability_session ON staff_availability(exam_session_id, availability, staff_id);
-CREATE INDEX ix_staff_attendance_session ON staff_attendance(exam_session_id, attendance, staff_id);
 CREATE INDEX ix_room_availability_session ON room_availability(exam_session_id, available, room_id);
 CREATE INDEX ix_plan_session_exam_session ON plan_session(exam_session_id, plan_id);
 CREATE INDEX ix_room_assignment_room ON room_assignment(room_id, plan_session_id);

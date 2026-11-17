@@ -10,6 +10,6 @@ public record AffiliationImportPreview(String fileName, String sha256, String so
 
     public enum Status { ADD, SKIP, ERROR }
     public record Row(int sourceRow, Status status, String staffId, String courseId,
-            String courseCode, String relationshipType, String dataLabel, String message,
+            String courseCode, String dataLabel, String message,
             String rawValues, String normalizedValues) {}
 }

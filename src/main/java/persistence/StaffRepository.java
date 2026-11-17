@@ -54,22 +54,19 @@ public final class StaffRepository {
         }
     }
 
-    public java.util.Map<String, SessionStaffStatus> findSessionStatuses(String sessionId) throws SQLException {
+    /** Returns staff ID -> AVAILABLE / UNAVAILABLE / NOT_SET for one exam session. */
+    public java.util.Map<String, String> findSessionAvailability(String sessionId) throws SQLException {
         try (Connection connection = connections.openConnection();
              var statement = connection.prepareStatement("""
-                     SELECT s.staff_id, COALESCE(a.availability,'NOT_SET') AS availability,
-                         COALESCE(t.attendance,'NOT_RECORDED') AS attendance
+                     SELECT s.staff_id, COALESCE(a.availability,'NOT_SET') AS availability
                      FROM staff s
                      LEFT JOIN staff_availability a ON a.staff_id=s.staff_id AND a.exam_session_id=?
-                     LEFT JOIN staff_attendance t ON t.staff_id=s.staff_id AND t.exam_session_id=?
-                     ORDER BY s.full_name, s.staff_id
                      """)) {
-            statement.setString(1, sessionId); statement.setString(2, sessionId);
+            statement.setString(1, sessionId);
             try (var rows = statement.executeQuery()) {
-                java.util.Map<String, SessionStaffStatus> statuses = new java.util.HashMap<>();
-                while (rows.next()) statuses.put(rows.getString("staff_id"), new SessionStaffStatus(
-                        rows.getString("availability"), rows.getString("attendance")));
-                return java.util.Map.copyOf(statuses);
+                java.util.Map<String, String> availability = new java.util.HashMap<>();
+                while (rows.next()) availability.put(rows.getString("staff_id"), rows.getString("availability"));
+                return java.util.Map.copyOf(availability);
             }
         }
     }
@@ -138,100 +135,30 @@ public final class StaffRepository {
         }
     }
 
-    public List<SessionAttendanceRow> findSessionAttendance(String sessionId) throws SQLException {
-        try (Connection connection = connections.openConnection(); var statement = connection.prepareStatement("""
-                SELECT e.event_code, x.exam_session_id, x.session_date, x.start_time,
-                    s.staff_id, s.full_name, s.department, s.active,
-                    COALESCE(a.availability,'NOT_SET') AS availability,
-                    COALESCE(t.attendance,'NOT_RECORDED') AS attendance,
-                    GROUP_CONCAT(DISTINCT e.event_code || ' v' || p.version_number || ' ' || b.building_code || ' ' || r.room_code) AS assigned_rooms
-                FROM staff s JOIN exam_session x ON x.exam_session_id=?
-                JOIN exam_event e ON e.event_id=x.event_id
-                LEFT JOIN staff_availability a ON a.staff_id=s.staff_id AND a.exam_session_id=x.exam_session_id
-                LEFT JOIN staff_attendance t ON t.staff_id=s.staff_id AND t.exam_session_id=x.exam_session_id
-                LEFT JOIN invigilation_assignment ia ON ia.staff_id=s.staff_id AND ia.assignment_status<>'REMOVED'
-                LEFT JOIN room_assignment ra ON ra.room_assignment_id=ia.room_assignment_id
-                    AND ra.assignment_status<>'REMOVED'
-                LEFT JOIN plan_session ps ON ps.plan_session_id=ra.plan_session_id
-                    AND ps.exam_session_id=x.exam_session_id
-                LEFT JOIN plan p ON p.plan_id=ps.plan_id AND p.status<>'SUPERSEDED'
-                LEFT JOIN room r ON r.room_id=ra.room_id
-                LEFT JOIN building b ON b.building_id=r.building_id
-                GROUP BY s.staff_id
-                ORDER BY s.full_name,s.staff_id
-                """)) {
-            statement.setString(1, sessionId);
-            try (var rows = statement.executeQuery()) {
-                List<SessionAttendanceRow> result = new ArrayList<>();
-                while (rows.next()) result.add(new SessionAttendanceRow(rows.getString("event_code"),
-                        rows.getString("exam_session_id"), rows.getString("session_date"), rows.getString("start_time"),
-                        rows.getString("staff_id"), rows.getString("full_name"), rows.getString("department"),
-                        rows.getInt("active") == 1, rows.getString("availability"), rows.getString("attendance"),
-                        rows.getString("assigned_rooms")));
-                return List.copyOf(result);
-            }
-        }
-    }
-
-    public void setSessionStatuses(String sessionId, List<String> staffIds, String availability,
-            String attendance) throws SQLException {
-        List<SessionStatusUpdate> updates = staffIds.stream()
-                .map(staffId -> new SessionStatusUpdate(staffId, availability, attendance)).toList();
-        updateSessionStatuses(sessionId, updates);
-    }
-
-    public void updateSessionStatuses(String sessionId, List<SessionStatusUpdate> updates) throws SQLException {
+    /** Sets AVAILABLE, UNAVAILABLE or NOT_SET for the given staff in one session. */
+    public void setSessionAvailability(String sessionId, List<String> staffIds, String availability) throws SQLException {
         if (sessionId == null || sessionId.isBlank()) throw new IllegalArgumentException("Choose an exam session.");
-        if (updates.isEmpty()) throw new IllegalArgumentException("Select at least one staff member.");
-        String now = Instant.now().toString();
+        if (staffIds.isEmpty()) throw new IllegalArgumentException("Select at least one staff member.");
+        if (!List.of("NOT_SET", "AVAILABLE", "UNAVAILABLE").contains(availability))
+            throw new IllegalArgumentException("Choose Available, Unavailable, or Not set.");
         try (Connection connection = connections.openConnection()) {
             connection.setAutoCommit(false);
-            try {
-                for (SessionStatusUpdate update : updates) {
-                    if (update.availability() != null && !List.of("NOT_SET", "AVAILABLE", "UNAVAILABLE").contains(update.availability()))
-                        throw new IllegalArgumentException("Choose Available, Unavailable, or Not set.");
-                    if (update.attendance() != null && !List.of("PRESENT", "ABSENT", "NOT_RECORDED").contains(update.attendance()))
-                        throw new IllegalArgumentException("Choose Present, Absent, or Not recorded.");
-                    if (update.availability() == null && update.attendance() == null)
-                        throw new IllegalArgumentException("Choose an availability or attendance change.");
-                }
-                try (var removeAvailability = connection.prepareStatement(
-                            "DELETE FROM staff_availability WHERE staff_id=? AND exam_session_id=?");
-                     var saveAvailability = connection.prepareStatement("""
-                            INSERT INTO staff_availability(staff_id,exam_session_id,availability)
-                            VALUES (?,?,?) ON CONFLICT(staff_id,exam_session_id)
-                            DO UPDATE SET availability=excluded.availability, reason=NULL
-                            """);
-                     var removeAttendance = connection.prepareStatement(
-                            "DELETE FROM staff_attendance WHERE staff_id=? AND exam_session_id=?");
-                     var saveAttendance = connection.prepareStatement("""
-                            INSERT INTO staff_attendance(staff_id,exam_session_id,attendance,marked_at)
-                            VALUES (?,?,?,?) ON CONFLICT(staff_id,exam_session_id)
-                            DO UPDATE SET attendance=excluded.attendance, marked_at=excluded.marked_at
-                            """)) {
-                    for (SessionStatusUpdate update : updates) {
-                        if (update.availability() != null) {
-                            if (update.availability().equals("NOT_SET")) {
-                                removeAvailability.setString(1, update.staffId()); removeAvailability.setString(2, sessionId);
-                                removeAvailability.executeUpdate();
-                            } else {
-                                saveAvailability.setString(1, update.staffId()); saveAvailability.setString(2, sessionId);
-                                saveAvailability.setString(3, update.availability()); saveAvailability.executeUpdate();
-                            }
-                        }
-                        if (update.attendance() != null) {
-                            if (update.attendance().equals("NOT_RECORDED")) {
-                                removeAttendance.setString(1, update.staffId()); removeAttendance.setString(2, sessionId);
-                                removeAttendance.executeUpdate();
-                            } else {
-                                saveAttendance.setString(1, update.staffId()); saveAttendance.setString(2, sessionId);
-                                saveAttendance.setString(3, update.attendance()); saveAttendance.setString(4, now);
-                                saveAttendance.executeUpdate();
-                            }
-                        }
+            try (var remove = connection.prepareStatement(
+                        "DELETE FROM staff_availability WHERE staff_id=? AND exam_session_id=?");
+                 var save = connection.prepareStatement("""
+                        INSERT INTO staff_availability(staff_id,exam_session_id,availability)
+                        VALUES (?,?,?) ON CONFLICT(staff_id,exam_session_id)
+                        DO UPDATE SET availability=excluded.availability, reason=NULL
+                        """)) {
+                for (String staffId : staffIds) {
+                    if (availability.equals("NOT_SET")) {
+                        remove.setString(1, staffId); remove.setString(2, sessionId); remove.executeUpdate();
+                    } else {
+                        save.setString(1, staffId); save.setString(2, sessionId); save.setString(3, availability);
+                        save.executeUpdate();
                     }
                 }
-                bumpSessionRevision(connection, sessionId, now);
+                bumpSessionRevision(connection, sessionId, Instant.now().toString());
                 connection.commit();
             } catch (SQLException | RuntimeException exception) {
                 connection.rollback(); throw exception;
@@ -403,10 +330,10 @@ public final class StaffRepository {
                 while (rows.next()) courses.put(rows.getString("course_code"), rows.getString("course_id"));
             }
             try (var statement = connection.prepareStatement("""
-                    SELECT staff_id, course_id, relationship_type FROM staff_course_relationship
+                    SELECT staff_id, course_id FROM staff_course_relationship
                     """); var rows = statement.executeQuery()) {
                 while (rows.next()) existing.add(StaffAffiliationCsvImporter.relationshipKey(
-                        rows.getString("staff_id"), rows.getString("course_id"), rows.getString("relationship_type")));
+                        rows.getString("staff_id"), rows.getString("course_id")));
             }
         }
         return new StaffAffiliationCsvImporter.Context(java.util.Set.copyOf(staff), courses, existing);
@@ -415,15 +342,15 @@ public final class StaffRepository {
     public List<AffiliationView> findAffiliationViews(String staffId) throws SQLException {
         try (Connection connection = connections.openConnection();
              var statement = connection.prepareStatement("""
-                     SELECT c.course_code, r.relationship_type, r.data_label
+                     SELECT c.course_code, r.data_label
                      FROM staff_course_relationship r JOIN course c ON c.course_id=r.course_id
-                     WHERE r.staff_id=? ORDER BY c.course_code, r.relationship_type
+                     WHERE r.staff_id=? ORDER BY c.course_code
                      """)) {
             statement.setString(1, staffId);
             try (var rows = statement.executeQuery()) {
                 List<AffiliationView> affiliations = new ArrayList<>();
                 while (rows.next()) affiliations.add(new AffiliationView(rows.getString("course_code"),
-                        AffiliationType.valueOf(rows.getString("relationship_type")), rows.getString("data_label")));
+                        rows.getString("data_label")));
                 return List.copyOf(affiliations);
             }
         }
@@ -443,13 +370,13 @@ public final class StaffRepository {
     public List<AffiliationExportRow> findAllAffiliations() throws SQLException {
         try (Connection connection = connections.openConnection();
              var statement = connection.prepareStatement("""
-                     SELECT r.staff_id, c.course_code, r.relationship_type, r.data_label
+                     SELECT r.staff_id, c.course_code, r.data_label
                      FROM staff_course_relationship r JOIN course c ON c.course_id=r.course_id
-                     ORDER BY r.staff_id, c.course_code, r.relationship_type
+                     ORDER BY r.staff_id, c.course_code
                      """); var rows = statement.executeQuery()) {
             List<AffiliationExportRow> affiliations = new ArrayList<>();
             while (rows.next()) affiliations.add(new AffiliationExportRow(rows.getString("staff_id"),
-                    rows.getString("course_code"), rows.getString("relationship_type"), rows.getString("data_label")));
+                    rows.getString("course_code"), rows.getString("data_label")));
             return List.copyOf(affiliations);
         }
     }
@@ -507,14 +434,14 @@ public final class StaffRepository {
                     diagnostic.executeBatch();
                 }
                 try (var insert = connection.prepareStatement("""
-                        INSERT INTO staff_course_relationship(staff_id, course_id, relationship_type, import_batch_id, data_label)
-                        VALUES (?, ?, ?, ?, ?)
+                        INSERT INTO staff_course_relationship(staff_id, course_id, import_batch_id, data_label)
+                        VALUES (?, ?, ?, ?)
                         """)) {
                     for (AffiliationImportPreview.Row row : preview.rows()) {
                         if (row.status() != AffiliationImportPreview.Status.ADD) continue;
                         insert.setString(1, row.staffId()); insert.setString(2, row.courseId());
-                        insert.setString(3, row.relationshipType()); insert.setString(4, batchId);
-                        insert.setString(5, row.dataLabel()); insert.addBatch(); added++;
+                        insert.setString(3, batchId); insert.setString(4, row.dataLabel());
+                        insert.addBatch(); added++;
                     }
                     insert.executeBatch();
                 }
@@ -562,34 +489,15 @@ public final class StaffRepository {
         }
     }
 
-    public void deactivate(List<String> staffIds) throws SQLException {
-        if (staffIds.isEmpty()) return;
-        try (Connection connection = connections.openConnection();
-             var statement = connection.prepareStatement("UPDATE staff SET active=0 WHERE staff_id=?")) {
-            connection.setAutoCommit(false);
-            try {
-                for (String staffId : staffIds) {
-                    statement.setString(1, staffId);
-                    if (statement.executeUpdate() == 0) throw new IllegalArgumentException("Unknown staff ID: " + staffId);
-                }
-                bumpEventRevisions(connection, Instant.now().toString());
-                connection.commit();
-            } catch (SQLException | RuntimeException exception) {
-                connection.rollback(); throw exception;
-            }
-        }
-    }
-
-    public void addAffiliation(String staffId, Affiliation affiliation) throws SQLException {
+    /** Links a staff member to a course; linked staff cannot invigilate rooms holding that course. */
+    public void addAffiliationByCourseCode(String staffId, String courseCode) throws SQLException {
+        String courseId = findCourseId(courseCode);
         try (Connection connection = connections.openConnection()) {
             connection.setAutoCommit(false);
             try {
-                try (var statement = connection.prepareStatement("""
-                        INSERT INTO staff_course_relationship(staff_id, course_id, relationship_type)
-                        VALUES (?, ?, ?)
-                        """)) {
-                    statement.setString(1, staffId); statement.setString(2, affiliation.courseId());
-                    statement.setString(3, affiliation.type().name()); statement.executeUpdate();
+                try (var statement = connection.prepareStatement(
+                        "INSERT INTO staff_course_relationship(staff_id, course_id) VALUES (?, ?)")) {
+                    statement.setString(1, staffId); statement.setString(2, courseId); statement.executeUpdate();
                 }
                 bumpEventRevisions(connection, Instant.now().toString());
                 connection.commit();
@@ -599,87 +507,20 @@ public final class StaffRepository {
         }
     }
 
-    public void addAffiliationByCourseCode(String staffId, String courseCode, AffiliationType type) throws SQLException {
+    public void removeAffiliationByCourseCode(String staffId, String courseCode) throws SQLException {
         String courseId = findCourseId(courseCode);
-        addAffiliation(staffId, new Affiliation(courseId, type));
-    }
-
-    public void removeAffiliation(String staffId, Affiliation affiliation) throws SQLException {
         try (Connection connection = connections.openConnection()) {
             connection.setAutoCommit(false);
             try {
                 int removed;
-                try (var statement = connection.prepareStatement("""
-                        DELETE FROM staff_course_relationship
-                        WHERE staff_id=? AND course_id=? AND relationship_type=?
-                        """)) {
-                    statement.setString(1, staffId); statement.setString(2, affiliation.courseId());
-                    statement.setString(3, affiliation.type().name()); removed = statement.executeUpdate();
+                try (var statement = connection.prepareStatement(
+                        "DELETE FROM staff_course_relationship WHERE staff_id=? AND course_id=?")) {
+                    statement.setString(1, staffId); statement.setString(2, courseId); removed = statement.executeUpdate();
                 }
                 if (removed > 0) bumpEventRevisions(connection, Instant.now().toString());
                 connection.commit();
             } catch (SQLException | RuntimeException exception) {
                 connection.rollback(); throw exception;
-            }
-        }
-    }
-
-    public void removeAffiliationByCourseCode(String staffId, String courseCode, AffiliationType type) throws SQLException {
-        removeAffiliation(staffId, new Affiliation(findCourseId(courseCode), type));
-    }
-
-    public void replaceAffiliations(String staffId, List<Affiliation> affiliations) throws SQLException {
-        try (Connection connection = connections.openConnection()) {
-            boolean autoCommit = connection.getAutoCommit();
-            connection.setAutoCommit(false);
-            try {
-                try (var exists = connection.prepareStatement("SELECT 1 FROM staff WHERE staff_id=?")) {
-                    exists.setString(1, staffId);
-                    try (var row = exists.executeQuery()) {
-                        if (!row.next()) throw new IllegalArgumentException("Unknown staff ID: " + staffId);
-                    }
-                }
-                try (var delete = connection.prepareStatement("DELETE FROM staff_course_relationship WHERE staff_id=?")) {
-                    delete.setString(1, staffId);
-                    delete.executeUpdate();
-                }
-                try (var insert = connection.prepareStatement("""
-                        INSERT INTO staff_course_relationship(staff_id, course_id, relationship_type)
-                        VALUES (?, ?, ?)
-                        """)) {
-                    for (Affiliation affiliation : affiliations) {
-                        insert.setString(1, staffId);
-                        insert.setString(2, affiliation.courseId());
-                        insert.setString(3, affiliation.type().name());
-                        insert.addBatch();
-                    }
-                    insert.executeBatch();
-                }
-                bumpEventRevisions(connection, Instant.now().toString());
-                connection.commit();
-            } catch (SQLException | RuntimeException exception) {
-                connection.rollback();
-                throw exception;
-            } finally {
-                connection.setAutoCommit(autoCommit);
-            }
-        }
-    }
-
-    public List<Affiliation> findAffiliations(String staffId) throws SQLException {
-        try (Connection connection = connections.openConnection();
-             var statement = connection.prepareStatement("""
-                     SELECT course_id, relationship_type FROM staff_course_relationship
-                     WHERE staff_id=? ORDER BY course_id, relationship_type
-                     """)) {
-            statement.setString(1, staffId);
-            try (var rows = statement.executeQuery()) {
-                List<Affiliation> affiliations = new ArrayList<>();
-                while (rows.next()) {
-                    affiliations.add(new Affiliation(rows.getString("course_id"),
-                            AffiliationType.valueOf(rows.getString("relationship_type"))));
-                }
-                return List.copyOf(affiliations);
             }
         }
     }
@@ -722,31 +563,15 @@ public final class StaffRepository {
         statement.setString(6, staff.dataLabel());
     }
 
-    public record Affiliation(String courseId, AffiliationType type) {
-        public Affiliation {
-            if (courseId == null || courseId.isBlank()) {
-                throw new IllegalArgumentException("Course ID is required");
-            }
-            Objects.requireNonNull(type, "Affiliation type is required");
-        }
-    }
-
-    public record AffiliationView(String courseCode, AffiliationType type, String dataLabel) {}
-    public record AffiliationExportRow(String staffId, String courseCode, String relationshipType, String dataLabel) {}
+    public record AffiliationView(String courseCode, String dataLabel) {}
+    public record AffiliationExportRow(String staffId, String courseCode, String dataLabel) {}
     public record SessionOption(String sessionId, String eventCode, String date, String startTime) {
         @Override public String toString() { return eventCode + " · " + date + " " + startTime; }
     }
-    public record SessionStaffStatus(String availability, String attendance) {}
-    public record SessionStatusUpdate(String staffId, String availability, String attendance) {}
     public record AssignedRoomView(String staffId, String eventCode, int planVersion, String planStatus,
             boolean stale, String buildingCode, String roomCode) {}
     public record RoomAssignmentSummary(String eventCode, int planVersion, String planStatus, boolean stale,
             String buildingCode, String roomCode, int requiredStaff, int assignedStaff, String staffIds) {
         public boolean hasShortage() { return assignedStaff < requiredStaff; }
     }
-    public record SessionAttendanceRow(String eventCode, String sessionId, String date, String startTime,
-            String staffId, String fullName, String department, boolean active, String availability,
-            String attendance, String assignedRooms) {}
-
-    public enum AffiliationType { TEACHES, EXCLUDED }
 }

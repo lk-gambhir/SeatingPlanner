@@ -62,7 +62,6 @@ public final class ExamImportDashboard extends BorderPane {
     private final Button studentConflictButton = new Button("Check student conflicts");
     private final Button generatePlanButton = new Button("Generate seating draft");
     private final Button openPlanButton = new Button("Open saved plan");
-    private final Button purgeEventButton = new Button("Purge event and plans");
     private final Label feasibilityStatus = new Label("Select a saved event to check room and staff capacity.");
     private final TextArea feasibilityDetails = new TextArea();
     private final TextField schedulePath = new TextField();
@@ -104,8 +103,6 @@ public final class ExamImportDashboard extends BorderPane {
         generatePlanButton.setOnAction(event -> generatePlan());
         openPlanButton.setDisable(true);
         openPlanButton.setOnAction(event -> openSavedPlan());
-        purgeEventButton.setDisable(true);
-        purgeEventButton.setOnAction(event -> purgeSelectedEvent());
         savedPlans.getColumns().addAll(List.of(
                 planColumn("Version", plan -> "v" + plan.version(), 90),
                 planColumn("Status", PlanRepository.PlanSummary::status, 110),
@@ -118,7 +115,6 @@ public final class ExamImportDashboard extends BorderPane {
             feasibilityButton.setDisable(selected == null);
             studentConflictButton.setDisable(selected == null);
             generatePlanButton.setDisable(selected == null);
-            purgeEventButton.setDisable(selected == null);
             feasibilityDetails.clear();
             feasibilityStatus.setText(selected == null ? "Select a saved event to check room and staff capacity."
                     : "Ready to check " + selected.eventCode() + ".");
@@ -130,7 +126,7 @@ public final class ExamImportDashboard extends BorderPane {
         });
         feasibilityDetails.setEditable(false); feasibilityDetails.setWrapText(true);
         VBox content = new VBox(10, new HBox(10, feasibilityButton, studentConflictButton, generatePlanButton,
-                purgeEventButton, feasibilityStatus), savedEvents,
+                feasibilityStatus), savedEvents,
                 new Label("Saved plan versions"), savedPlans, new HBox(8, openPlanButton),
                 new Label("Feasibility report · course-to-room estimate"), feasibilityDetails);
         content.setPadding(new Insets(16, 24, 20, 24));
@@ -464,49 +460,6 @@ public final class ExamImportDashboard extends BorderPane {
                 eventColumn("Candidates", event -> String.valueOf(event.candidateCount()), 120)));
         savedEvents.setItems(FXCollections.observableArrayList(repository.findAll()));
         savedEvents.setPlaceholder(new Label("No exams imported yet."));
-    }
-
-    private void purgeSelectedEvent() {
-        ExamRepository.ExamSummary selected = savedEvents.getSelectionModel().getSelectedItem();
-        if (selected == null) return;
-        ButtonType purge = new ButtonType("Purge event", ButtonBar.ButtonData.OK_DONE);
-        Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION,
-                "This permanently deletes " + selected.eventCode() + ", all saved plans including finalized plans, "
-                        + "its registrations, and import records used only by this event. Student profiles used by "
-                        + "other events remain. If unused student profiles are removed, their CSV row snapshots are "
-                        + "cleared and student-profile import diagnostics are removed. Room, course, and staff master "
-                        + "records remain.", purge, ButtonType.CANCEL);
-        confirmation.setTitle("Purge exam event");
-        confirmation.setHeaderText("This action cannot be undone.");
-        if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != purge) return;
-
-        purgeEventButton.setDisable(true);
-        Task<ExamRepository.PurgeResult> task = new Task<>() {
-            @Override protected ExamRepository.PurgeResult call() throws Exception {
-                return repository.purgeEvent(selected.eventCode());
-            }
-        };
-        task.setOnSucceeded(event -> {
-            try {
-                refreshSavedEvents();
-                savedPlans.getItems().clear();
-                feasibilityDetails.clear();
-                feasibilityStatus.setText("Event purged.");
-                ExamRepository.PurgeResult result = task.getValue();
-                info("Event purged", result.eventCode() + " and " + result.plansDeleted() + " plan versions deleted. "
-                        + result.studentProfilesDeleted() + " unused student profiles and "
-                        + result.importBatchesDeleted() + " event-only import batches deleted.");
-            } catch (SQLException exception) {
-                error("Event purged but exam list could not refresh", exception);
-            }
-        });
-        task.setOnFailed(event -> {
-            purgeEventButton.setDisable(savedEvents.getSelectionModel().getSelectedItem() == null);
-            error("Could not purge event", task.getException());
-        });
-        Thread worker = new Thread(task, "purge-exam-event");
-        worker.setDaemon(true);
-        worker.start();
     }
 
     private void checkFeasibility() {

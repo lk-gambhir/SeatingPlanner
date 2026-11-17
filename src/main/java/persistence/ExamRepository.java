@@ -2,12 +2,7 @@ package persistence;
 
 import importexport.ExamImportPreview;
 import importexport.CsvImportValues;
-import org.apache.commons.csv.CSVFormat;
-import org.apache.commons.csv.CSVParser;
-import org.apache.commons.csv.CSVRecord;
 
-import java.io.IOException;
-import java.io.StringReader;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.format.DateTimeFormatter;
@@ -15,8 +10,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
-import java.util.Set;
 import java.util.UUID;
 
 /** Persists reviewed exam schedule and course-count imports. */
@@ -41,215 +34,6 @@ public final class ExamRepository {
                     rows.getString("status"), rows.getInt("sessions"), rows.getInt("papers"), rows.getInt("candidates")));
             return List.copyOf(events);
         }
-    }
-
-    public PurgeResult purgeEvent(String eventCode) throws SQLException {
-        try (Connection connection = connections.openConnection()) {
-            connection.setAutoCommit(false);
-            try {
-                String eventId = findEventId(connection, eventCode);
-                List<String> studentIds = findEventStudentIds(connection, eventId);
-                List<String> batchIds = findEventImportBatchIds(connection, eventId);
-                int plans = deletePlans(connection, eventId);
-                try (var delete = connection.prepareStatement("DELETE FROM exam_event WHERE event_id=?")) {
-                    delete.setString(1, eventId);
-                    delete.executeUpdate();
-                }
-                List<String> deletedStudentIds = deleteUnusedStudents(connection, studentIds);
-                if (!deletedStudentIds.isEmpty()) clearStudentImportSnapshots(connection, deletedStudentIds);
-                int imports = deleteUnusedImportBatches(connection, batchIds);
-                connection.commit();
-                return new PurgeResult(eventCode, plans, deletedStudentIds.size(), imports);
-            } catch (SQLException | RuntimeException exception) {
-                connection.rollback();
-                throw exception;
-            }
-        }
-    }
-
-    private static String findEventId(Connection connection, String eventCode) throws SQLException {
-        try (var query = connection.prepareStatement("SELECT event_id FROM exam_event WHERE event_code=?")) {
-            query.setString(1, eventCode);
-            try (var rows = query.executeQuery()) {
-                if (!rows.next()) throw new IllegalArgumentException("Unknown exam event: " + eventCode);
-                return rows.getString(1);
-            }
-        }
-    }
-
-    private static List<String> findEventStudentIds(Connection connection, String eventId) throws SQLException {
-        try (var query = connection.prepareStatement("""
-                SELECT DISTINCT student_id FROM enrollment n
-                JOIN session_course sc ON sc.session_course_id=n.session_course_id
-                JOIN exam_session x ON x.exam_session_id=sc.exam_session_id
-                WHERE x.event_id=? ORDER BY student_id
-                """)) {
-            query.setString(1, eventId);
-            try (var rows = query.executeQuery()) {
-                List<String> ids = new ArrayList<>();
-                while (rows.next()) ids.add(rows.getString(1));
-                return List.copyOf(ids);
-            }
-        }
-    }
-
-    private static List<String> findEventImportBatchIds(Connection connection, String eventId) throws SQLException {
-        try (var query = connection.prepareStatement("""
-                SELECT import_batch_id FROM session_course sc
-                JOIN exam_session x ON x.exam_session_id=sc.exam_session_id
-                WHERE x.event_id=? AND import_batch_id IS NOT NULL
-                UNION
-                SELECT n.import_batch_id FROM enrollment n
-                JOIN session_course sc ON sc.session_course_id=n.session_course_id
-                JOIN exam_session x ON x.exam_session_id=sc.exam_session_id
-                WHERE x.event_id=? AND n.import_batch_id IS NOT NULL
-                """)) {
-            query.setString(1, eventId);
-            query.setString(2, eventId);
-            try (var rows = query.executeQuery()) {
-                List<String> ids = new ArrayList<>();
-                while (rows.next()) ids.add(rows.getString(1));
-                return List.copyOf(ids);
-            }
-        }
-    }
-
-    private static int deletePlans(Connection connection, String eventId) throws SQLException {
-        try (var delDiag = connection.prepareStatement("""
-                DELETE FROM plan_diagnostic WHERE plan_id IN (SELECT plan_id FROM plan WHERE event_id=?)
-                """)) {
-            delDiag.setString(1, eventId);
-            delDiag.executeUpdate();
-        }
-        try (var delInv = connection.prepareStatement("""
-                DELETE FROM invigilation_assignment WHERE room_assignment_id IN (
-                    SELECT ra.room_assignment_id FROM room_assignment ra
-                    JOIN plan_session ps ON ps.plan_session_id=ra.plan_session_id
-                    JOIN plan p ON p.plan_id=ps.plan_id WHERE p.event_id=?)
-                """)) {
-            delInv.setString(1, eventId);
-            delInv.executeUpdate();
-        }
-        try (var delSeats = connection.prepareStatement("""
-                DELETE FROM seat_assignment WHERE plan_session_id IN (
-                    SELECT ps.plan_session_id FROM plan_session ps
-                    JOIN plan p ON p.plan_id=ps.plan_id WHERE p.event_id=?)
-                """)) {
-            delSeats.setString(1, eventId);
-            delSeats.executeUpdate();
-        }
-        try (var delRoomSeats = connection.prepareStatement("""
-                DELETE FROM room_assignment_seat WHERE room_assignment_id IN (
-                    SELECT ra.room_assignment_id FROM room_assignment ra
-                    JOIN plan_session ps ON ps.plan_session_id=ra.plan_session_id
-                    JOIN plan p ON p.plan_id=ps.plan_id WHERE p.event_id=?)
-                """)) {
-            delRoomSeats.setString(1, eventId);
-            delRoomSeats.executeUpdate();
-        }
-        try (var delRooms = connection.prepareStatement("""
-                DELETE FROM room_assignment WHERE plan_session_id IN (
-                    SELECT ps.plan_session_id FROM plan_session ps
-                    JOIN plan p ON p.plan_id=ps.plan_id WHERE p.event_id=?)
-                """)) {
-            delRooms.setString(1, eventId);
-            delRooms.executeUpdate();
-        }
-        try (var delSessions = connection.prepareStatement("""
-                DELETE FROM plan_session WHERE plan_id IN (SELECT plan_id FROM plan WHERE event_id=?)
-                """)) {
-            delSessions.setString(1, eventId);
-            delSessions.executeUpdate();
-        }
-        try (var delete = connection.prepareStatement("DELETE FROM plan WHERE event_id=?")) {
-            delete.setString(1, eventId);
-            return delete.executeUpdate();
-        }
-    }
-
-    private static List<String> deleteUnusedStudents(Connection connection, List<String> studentIds) throws SQLException {
-        List<String> deleted = new ArrayList<>();
-        try (var delete = connection.prepareStatement("""
-                DELETE FROM student WHERE student_id=?
-                    AND NOT EXISTS (SELECT 1 FROM enrollment WHERE enrollment.student_id=student.student_id)
-                    AND NOT EXISTS (SELECT 1 FROM seat_assignment WHERE seat_assignment.student_id=student.student_id)
-                """)) {
-            for (String studentId : studentIds) {
-                delete.setString(1, studentId);
-                if (delete.executeUpdate() > 0) deleted.add(studentId);
-            }
-        }
-        return List.copyOf(deleted);
-    }
-
-    private static void clearStudentImportSnapshots(Connection connection, List<String> deletedStudentIds) throws SQLException {
-        var snapshots = new ArrayList<StudentImportSnapshot>();
-        try (var query = connection.prepareStatement("""
-                SELECT staged.import_staged_row_id, staged.normalized_values
-                FROM import_source source JOIN import_batch batch ON batch.import_batch_id=source.import_batch_id
-                JOIN import_staged_row staged ON staged.import_source_id=source.import_source_id
-                WHERE batch.batch_label LIKE 'Students:%' AND source.source_type='CSV'
-                """); var rows = query.executeQuery()) {
-            while (rows.next()) snapshots.add(new StudentImportSnapshot(rows.getString(1), rows.getString(2)));
-        }
-
-        Set<String> deletedIds = Set.copyOf(deletedStudentIds);
-        try (var scrub = connection.prepareStatement(
-                     "UPDATE import_staged_row SET raw_values=NULL, normalized_values=NULL WHERE import_staged_row_id=?")) {
-            for (StudentImportSnapshot row : snapshots) {
-                String studentId = row.normalizedValues() == null ? null : stagedStudentId(row.normalizedValues());
-                if (studentId == null || deletedIds.contains(studentId)) {
-                    scrub.setString(1, row.stagedRowId()); scrub.executeUpdate();
-                }
-            }
-        }
-        try (var diagnostics = connection.prepareStatement("""
-                DELETE FROM import_diagnostic WHERE import_source_id IN (
-                    SELECT source.import_source_id FROM import_source source
-                    JOIN import_batch batch ON batch.import_batch_id=source.import_batch_id
-                    WHERE batch.batch_label LIKE 'Students:%' AND source.source_type='CSV')
-                """)) {
-            diagnostics.executeUpdate();
-        }
-    }
-
-    private static String stagedStudentId(String normalizedValues) throws SQLException {
-        try (CSVParser parser = CSVParser.parse(new StringReader(normalizedValues), CSVFormat.DEFAULT)) {
-            List<CSVRecord> records = parser.getRecords();
-            if (records.size() < 2) return null;
-            int idColumn = records.getFirst().toList().indexOf("student_id");
-            return idColumn < 0 || idColumn >= records.get(1).size() ? null : records.get(1).get(idColumn);
-        } catch (IOException exception) {
-            throw new SQLException("Could not read a saved student import row during purge.", exception);
-        }
-    }
-
-    private static int deleteUnusedImportBatches(Connection connection, List<String> batchIds) throws SQLException {
-        int deleted = 0;
-        try (var references = connection.prepareStatement("""
-                     SELECT (SELECT COUNT(*) FROM session_course WHERE import_batch_id=?)
-                          + (SELECT COUNT(*) FROM enrollment WHERE import_batch_id=?)
-                          + (SELECT COUNT(*) FROM staff_course_relationship WHERE import_batch_id=?)
-                     """);
-             var diagnostics = connection.prepareStatement("DELETE FROM import_diagnostic WHERE import_batch_id=?");
-             var sources = connection.prepareStatement("DELETE FROM import_source WHERE import_batch_id=?");
-             var batch = connection.prepareStatement("DELETE FROM import_batch WHERE import_batch_id=?")) {
-            for (String batchId : batchIds) {
-                references.setString(1, batchId);
-                references.setString(2, batchId);
-                references.setString(3, batchId);
-                try (var rows = references.executeQuery()) {
-                    if (!rows.next() || rows.getInt(1) != 0) continue;
-                }
-                diagnostics.setString(1, batchId);
-                diagnostics.executeUpdate();
-                sources.setString(1, batchId);
-                sources.executeUpdate();
-                batch.setString(1, batchId);
-                deleted += batch.executeUpdate();
-            }
-        }
-        return deleted;
     }
 
     public boolean hasEventCode(String eventCode) throws SQLException {
@@ -421,6 +205,4 @@ public final class ExamRepository {
 
     public record ExamSummary(String eventCode, String name, String status,
             int sessionCount, int paperCount, int candidateCount) {}
-    public record PurgeResult(String eventCode, int plansDeleted, int studentProfilesDeleted, int importBatchesDeleted) {}
-    private record StudentImportSnapshot(String stagedRowId, String normalizedValues) {}
 }
