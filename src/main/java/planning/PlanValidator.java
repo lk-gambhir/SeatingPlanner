@@ -45,7 +45,7 @@ public final class PlanValidator {
                         || !session.endTime().equals(sourceSession.endTime().toString())) add(violations,
                                 session.id(), null, "SESSION_TIME_MISMATCH", "Plan timing does not match the source session.");
                 for (var course : sourceSession.courseDemand().entrySet()) {
-                    if (assignedByCourse.getOrDefault(course.getKey(), 0) != course.getValue()) add(violations,
+                    if (!course.getValue().equals(assignedByCourse.getOrDefault(course.getKey(), 0))) add(violations,
                             session.id(), null, "COURSE_DEMAND_MISMATCH", course.getKey()
                                     + " has " + assignedByCourse.getOrDefault(course.getKey(), 0)
                                     + " assigned candidates; source demand is " + course.getValue() + ".");
