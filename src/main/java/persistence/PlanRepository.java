@@ -547,7 +547,6 @@ public final class PlanRepository {
 
     public SavedPlan saveDraft(GeneratedPlan plan, String changeSummary) throws SQLException {
         String summary = changeSummary == null || changeSummary.isBlank() ? "Saved seating draft" : changeSummary.trim();
-        String id = UUID.randomUUID().toString();
         String now = Instant.now().toString();
         try (Connection connection = connections.openConnection()) {
             connection.setAutoCommit(false);
@@ -572,6 +571,7 @@ public final class PlanRepository {
                     statement.setString(1, eventId);
                     try (var row = statement.executeQuery()) { row.next(); version = row.getInt(1); }
                 }
+                String id = plan.eventCode() + "-v" + version;
                 insertPlan(connection, id, eventId, version, plan.sourceRevision(), now, summary);
                 int seatCount = insertSessions(connection, id, checked);
                 connection.commit();
@@ -828,13 +828,13 @@ public final class PlanRepository {
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """)) {
             for (GeneratedPlan.Session session : plan.sessions()) {
-                String planSessionId = UUID.randomUUID().toString();
+                String planSessionId = planId + "-" + session.id();
                 sessionInsert.setString(1, planSessionId); sessionInsert.setString(2, planId);
                 sessionInsert.setString(3, session.id()); sessionInsert.setString(4, session.date());
                 sessionInsert.setString(5, session.startTime()); sessionInsert.setString(6, session.endTime());
                 sessionInsert.setInt(7, session.candidateDemand()); sessionInsert.executeUpdate();
                 for (GeneratedPlan.Room room : session.rooms()) {
-                    String roomAssignmentId = UUID.randomUUID().toString();
+                    String roomAssignmentId = planSessionId + "-" + room.id();
                     roomInsert.setString(1, roomAssignmentId); roomInsert.setString(2, planSessionId);
                     roomInsert.setString(3, room.id()); roomInsert.setInt(4, room.candidateDemand());
                     roomInsert.setInt(5, room.staffRequired()); roomInsert.setString(6, room.buildingCode());
@@ -849,13 +849,13 @@ public final class PlanRepository {
                     roomSeatInsert.executeBatch();
                     roomSeatInsert.clearBatch();
                     for (String staffId : room.staffIds()) {
-                        staffInsert.setString(1, UUID.randomUUID().toString());
+                        staffInsert.setString(1, roomAssignmentId + "-STAFF-" + staffId);
                         staffInsert.setString(2, roomAssignmentId); staffInsert.setString(3, staffId);
                         staffInsert.executeUpdate();
                     }
                     for (SeatAssignmentPlanner.Assignment assignment : room.assignments()) {
                         var candidate = assignment.candidate();
-                        seatInsert.setString(1, UUID.randomUUID().toString()); seatInsert.setString(2, roomAssignmentId);
+                        seatInsert.setString(1, roomAssignmentId + "-SEAT-" + assignment.seat().id()); seatInsert.setString(2, roomAssignmentId);
                         seatInsert.setString(3, planSessionId); seatInsert.setString(4, session.id());
                         seatInsert.setString(5, room.id()); seatInsert.setInt(6, assignment.seat().id());
                         seatInsert.setString(7, candidate.sessionCourseId());

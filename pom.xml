@@ -70,6 +70,9 @@
                 <version>0.0.8</version>
                 <configuration>
                     <mainClass>app.ExamPlannerApplication</mainClass>
+                    <options>
+                        <option>--enable-native-access=javafx.graphics,ALL-UNNAMED</option>
+                    </options>
                 </configuration>
             </plugin>
         </plugins>

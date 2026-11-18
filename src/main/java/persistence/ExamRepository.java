@@ -51,10 +51,10 @@ public final class ExamRepository {
         }
         if (name == null || name.isBlank()) throw new IllegalArgumentException("Exam name is required.");
 
-        String eventId = UUID.randomUUID().toString();
-        String batchId = UUID.randomUUID().toString();
-        String scheduleSourceId = UUID.randomUUID().toString();
-        String countSourceId = UUID.randomUUID().toString();
+        String eventId = preview.eventCode();
+        String batchId = "BATCH-" + preview.eventCode() + "-" + System.currentTimeMillis();
+        String scheduleSourceId = "SRC-SCHEDULE-" + preview.eventCode();
+        String countSourceId = "SRC-COUNT-" + preview.eventCode();
         String now = Instant.now().toString();
         try (Connection connection = connections.openConnection()) {
             connection.setAutoCommit(false);
@@ -71,7 +71,7 @@ public final class ExamRepository {
                         preview.durationMinutes(), now);
                 int sessionNumber = 0;
                 for (ExamImportPreview.Session session : preview.sessions()) {
-                    String sessionId = eventId + "-S" + String.format("%03d", ++sessionNumber);
+                    String sessionId = preview.eventCode() + "-S" + String.format("%02d", ++sessionNumber);
                     insertSession(connection, sessionId, eventId, session);
                     insertStagedRow(connection, scheduleSourceId, session.sourceRow(), session.scheduleSourceText(),
                             CsvImportValues.encodeTable(List.of("source_row", "source_page", "date", "start_time",
